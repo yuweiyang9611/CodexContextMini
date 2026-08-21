@@ -3,8 +3,6 @@
 
 # Local development environments and caches
 .venv/
-.dotnet-home/
-.nuget/
 node_modules/
 __pycache__/
 *.pyc
@@ -29,9 +27,3 @@ coverage/
 .env
 .env.*
 !.env.example
-
-# Non-plugin prototypes retained only in the working directory
-apps/
-mini-control/
-legacy-notes/
-START-MINI.cmd
