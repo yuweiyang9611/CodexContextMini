@@ -1,0 +1,90 @@
+{
+  "updated": "2026-08-20",
+  "models": [
+    {
+      "id": "gpt-5.6",
+      "maxContextTokens": 1050000,
+      "source": "https://developers.openai.com/api/docs/models"
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "maxContextTokens": 1050000,
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.6-sol"
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "maxContextTokens": 1050000,
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.6-terra"
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "maxContextTokens": 1050000,
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.6-luna"
+    },
+    {
+      "id": "gpt-5.5",
+      "maxContextTokens": 1050000,
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.5"
+    },
+    {
+      "id": "gpt-5.5-2026-04-23",
+      "maxContextTokens": 1050000,
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.5"
+    },
+    {
+      "id": "gpt-5.5-pro",
+      "maxContextTokens": 1050000,
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.5-pro"
+    },
+    {
+      "id": "gpt-5.4",
+      "maxContextTokens": 1050000,
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.4"
+    },
+    {
+      "id": "gpt-5.4-2026-03-05",
+      "maxContextTokens": 1050000,
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.4"
+    },
+    {
+      "id": "gpt-5.4-pro",
+      "maxContextTokens": 1050000,
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.4"
+    },
+    {
+      "id": "chat-latest",
+      "maxContextTokens": 400000,
+      "source": "https://developers.openai.com/api/docs/models/chat-latest"
+    },
+    {
+      "id": "gpt-5.2-codex",
+      "maxContextTokens": 400000,
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.2-codex"
+    },
+    {
+      "id": "gpt-5.1-codex-max",
+      "maxContextTokens": 400000,
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.1-codex-max"
+    },
+    {
+      "id": "codex-mini-latest",
+      "maxContextTokens": 200000,
+      "source": "https://developers.openai.com/api/docs/models/codex-mini-latest"
+    },
+    {
+      "id": "gpt-5-chat-latest",
+      "maxContextTokens": 128000,
+      "source": "https://developers.openai.com/api/docs/models/gpt-5-chat-latest"
+    },
+    {
+      "id": "gpt-5.1-chat-latest",
+      "maxContextTokens": 128000,
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.1-chat-latest"
+    },
+    {
+      "id": "gpt-5.2-chat-latest",
+      "maxContextTokens": 128000,
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.2-chat-latest"
+    }
+  ]
+}

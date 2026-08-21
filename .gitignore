@@ -1,0 +1,37 @@
+# Local Codex state
+.codex/
+
+# Local development environments and caches
+.venv/
+.dotnet-home/
+.nuget/
+node_modules/
+__pycache__/
+*.pyc
+
+# Generated build and test output
+artifacts/
+bin/
+obj/
+out/
+.vs/
+TestResults/
+coverage/
+*.tmp
+*.log
+*.pdb
+*.dll
+*.exe
+*.user
+*.suo
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Non-plugin prototypes retained only in the working directory
+apps/
+mini-control/
+legacy-notes/
+START-MINI.cmd

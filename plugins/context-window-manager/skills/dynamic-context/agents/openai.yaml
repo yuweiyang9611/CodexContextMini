@@ -1,0 +1,3 @@
+interface:
+  display_name: "Dynamic Context"
+  short_description: "Manage context budgets and compaction safely"

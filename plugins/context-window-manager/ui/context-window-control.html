@@ -1,0 +1,792 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Context Window Slider</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f4f5f2;
+        --card: rgba(255, 255, 255, 0.92);
+        --card-strong: #ffffff;
+        --ink: #17221d;
+        --muted: #657068;
+        --line: rgba(23, 34, 29, 0.12);
+        --accent: #0d8a5f;
+        --accent-strong: #086a49;
+        --accent-soft: #d9f5e8;
+        --warn: #9b5c10;
+        --warn-soft: #fff3d9;
+        --error: #ac2f2f;
+        --error-soft: #ffe7e4;
+        --shadow: 0 18px 50px rgba(29, 44, 36, 0.11);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      :root[data-theme="dark"] {
+        --bg: #111613;
+        --card: rgba(27, 35, 31, 0.96);
+        --card-strong: #202923;
+        --ink: #edf5f0;
+        --muted: #aab7af;
+        --line: rgba(237, 245, 240, 0.13);
+        --accent: #4fd4a2;
+        --accent-strong: #82e7c1;
+        --accent-soft: #173c2e;
+        --warn: #f4bd68;
+        --warn-soft: #3d2e17;
+        --error: #ff8e88;
+        --error-soft: #411f1f;
+        --shadow: 0 22px 58px rgba(0, 0, 0, 0.3);
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: 14px;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 92% 0%, rgba(58, 190, 140, 0.18), transparent 34%),
+          radial-gradient(circle at 0% 94%, rgba(235, 177, 83, 0.12), transparent 38%),
+          var(--bg);
+      }
+
+      button, input, select { font: inherit; }
+      button { color: inherit; }
+
+      .shell {
+        width: min(100%, 720px);
+        margin: 0 auto;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: var(--card);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(16px);
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 18px;
+        padding: 22px 22px 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .eyebrow {
+        margin: 0 0 7px;
+        color: var(--accent-strong);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      h1 { margin: 0; font-size: clamp(22px, 5vw, 30px); line-height: 1.05; letter-spacing: -0.035em; }
+      .subtitle { margin: 9px 0 0; max-width: 520px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+
+      .profile-orb {
+        display: grid;
+        width: 76px;
+        height: 76px;
+        place-content: center;
+        border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+        border-radius: 22px;
+        background: var(--accent-soft);
+        text-align: center;
+      }
+
+      .profile-orb strong { color: var(--accent-strong); font-size: 20px; line-height: 1; }
+      .profile-orb span { margin-top: 5px; color: var(--muted); font-size: 10px; }
+
+      .content { display: grid; gap: 18px; padding: 20px 22px 22px; }
+
+      .project-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: 15px;
+        background: color-mix(in srgb, var(--card-strong) 78%, transparent);
+      }
+
+      .micro-label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 10px; font-weight: 750; letter-spacing: 0.08em; text-transform: uppercase; }
+      .project-path { overflow: hidden; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+
+      .trust-pill {
+        padding: 6px 9px;
+        border-radius: 999px;
+        color: var(--warn);
+        background: var(--warn-soft);
+        font-size: 11px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .section-title { display: flex; align-items: end; justify-content: space-between; gap: 12px; }
+      .section-title h2 { margin: 0; font-size: 13px; }
+      .section-title span { color: var(--muted); font-size: 11px; }
+
+      .presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 9px; }
+
+      .preset {
+        min-height: 54px;
+        padding: 7px 5px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--card-strong);
+        cursor: pointer;
+        transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+      }
+
+      .preset:hover:not(:disabled) { transform: translateY(-1px); border-color: var(--accent); }
+      .preset[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-strong); }
+      .preset:disabled { cursor: not-allowed; opacity: 0.4; }
+      .preset strong, .preset small { display: block; }
+      .preset strong { font-size: 14px; }
+      .preset small { margin-top: 3px; color: var(--muted); font-size: 9px; }
+
+      .control-card {
+        display: grid;
+        gap: 16px;
+        padding: 17px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: color-mix(in srgb, var(--card-strong) 88%, transparent);
+      }
+
+      .model-line { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; }
+      label { color: var(--muted); font-size: 11px; font-weight: 700; }
+
+      input[type="text"], input[type="number"], select {
+        width: 100%;
+        margin-top: 6px;
+        padding: 10px 11px;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        outline: none;
+        color: var(--ink);
+        background: var(--bg);
+      }
+
+      input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+      .capacity {
+        min-width: 115px;
+        padding: 10px 11px;
+        border-radius: 11px;
+        background: var(--accent-soft);
+        color: var(--accent-strong);
+        font-size: 11px;
+        font-weight: 750;
+        text-align: center;
+      }
+
+      .range-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+      .range-value { color: var(--accent-strong); font-size: 24px; font-weight: 850; letter-spacing: -0.04em; }
+
+      input[type="range"] {
+        width: 100%;
+        height: 24px;
+        margin: 3px 0 0;
+        accent-color: var(--accent);
+        cursor: pointer;
+      }
+
+      input[type="range"]:disabled { cursor: not-allowed; opacity: 0.42; }
+      .ticks { display: flex; justify-content: space-between; margin-top: -5px; color: var(--muted); font-size: 9px; }
+
+      .compact-grid { display: grid; grid-template-columns: minmax(0, 1fr) 128px; gap: 16px; align-items: end; }
+      .compact-readout { color: var(--muted); font-size: 11px; text-align: right; }
+      .compact-readout strong { display: block; color: var(--ink); font-size: 14px; }
+
+      .advisory {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 9px;
+        padding: 11px 12px;
+        border-radius: 13px;
+        color: var(--warn);
+        background: var(--warn-soft);
+        font-size: 11px;
+        line-height: 1.45;
+      }
+
+      .advisory.error { color: var(--error); background: var(--error-soft); }
+      .advisory .icon { font-size: 14px; }
+
+      .actions { display: grid; grid-template-columns: 1fr auto auto; gap: 9px; }
+
+      .action {
+        min-height: 43px;
+        padding: 9px 14px;
+        border: 1px solid var(--line);
+        border-radius: 13px;
+        background: var(--card-strong);
+        font-weight: 760;
+        cursor: pointer;
+      }
+
+      .action.primary { border-color: var(--accent); color: white; background: var(--accent-strong); }
+      .action.primary.confirm { border-color: var(--warn); background: var(--warn); }
+      .action.danger-confirm { border-color: var(--error); color: white; background: var(--error); }
+      .action:disabled { cursor: not-allowed; opacity: 0.45; }
+
+      .status-line { min-height: 18px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+      .status-line.success { color: var(--accent-strong); }
+      .status-line.error { color: var(--error); }
+
+      .fine-print { margin: -4px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+
+      @media (max-width: 560px) {
+        body { padding: 8px; }
+        .shell { border-radius: 18px; }
+        .hero, .content { padding-left: 15px; padding-right: 15px; }
+        .profile-orb { width: 65px; height: 65px; border-radius: 18px; }
+        .project-row, .model-line, .compact-grid { grid-template-columns: 1fr; }
+        .capacity, .compact-readout { text-align: left; }
+        .actions { grid-template-columns: 1fr 1fr; }
+        .actions .primary { grid-column: 1 / -1; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        * { scroll-behavior: auto !important; transition: none !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell" aria-labelledby="title">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Codex · Project scoped</p>
+          <h1 id="title">上下文窗口控制器</h1>
+          <p class="subtitle">选择预设或拖动滑块。只有点击并再次确认“应用”后，才会修改当前项目的 Codex 配置。</p>
+        </div>
+        <div class="profile-orb" aria-label="当前草稿配置">
+          <strong id="orb-value">Auto</strong>
+          <span>草稿</span>
+        </div>
+      </header>
+
+      <div class="content">
+        <div class="project-row">
+          <div>
+            <span class="micro-label">当前项目</span>
+            <div class="project-path" id="project-path" title="">等待宿主提供工作区…</div>
+          </div>
+          <span class="trust-pill">需可信项目</span>
+        </div>
+
+        <section aria-labelledby="preset-title">
+          <div class="section-title">
+            <h2 id="preset-title">快速预设</h2>
+            <span id="current-profile">当前：读取中</span>
+          </div>
+          <div class="presets" role="group" aria-label="上下文窗口预设">
+            <button class="preset" type="button" data-profile="auto" aria-pressed="false"><strong>Auto</strong><small>移除插件覆盖</small></button>
+            <button class="preset" type="button" data-profile="compact" aria-pressed="false"><strong>128K</strong><small>轻量任务</small></button>
+            <button class="preset" type="button" data-profile="balanced" aria-pressed="false"><strong>400K</strong><small>平衡模式</small></button>
+            <button class="preset" type="button" data-profile="1m" aria-pressed="false"><strong>1.05M</strong><small>长上下文</small></button>
+          </div>
+        </section>
+
+        <section class="control-card" aria-label="自定义上下文设置">
+          <div class="model-line">
+            <label>
+              活动模型 slug
+              <input id="model" type="text" maxlength="128" autocomplete="off" spellcheck="false" placeholder="例如 gpt-5.6-sol" />
+            </label>
+            <div class="capacity" id="capacity">目录容量：未知</div>
+          </div>
+
+          <div>
+            <div class="range-head">
+              <label for="window-range">上下文窗口</label>
+              <output class="range-value" id="window-value" for="window-range">400K</output>
+            </div>
+            <input id="window-range" type="range" min="8192" max="1050000" step="1" value="400000" aria-describedby="window-help" />
+            <div class="ticks" aria-hidden="true"><span>8K</span><span>128K</span><span>400K</span><span>1.05M</span></div>
+            <div id="window-help" class="fine-print">拖动只修改草稿，不会持续写盘。</div>
+          </div>
+
+          <div class="compact-grid">
+            <div>
+              <div class="range-head">
+                <label for="compact-ratio">自动压缩阈值</label>
+                <output id="ratio-value" for="compact-ratio">80%</output>
+              </div>
+              <input id="compact-ratio" type="range" min="50" max="95" step="1" value="80" />
+            </div>
+            <div class="compact-readout">预计在<strong id="compact-value">320K</strong>压缩</div>
+          </div>
+
+          <div class="compact-grid">
+            <label>
+              精确窗口值
+              <input id="window-number" type="number" min="8192" max="1050000" step="1" value="400000" />
+            </label>
+            <label>
+              阈值范围
+              <select id="scope">
+                <option value="total">total</option>
+                <option value="body_after_prefix">body_after_prefix</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <div class="advisory" id="advisory" role="note">
+          <span class="icon" aria-hidden="true">◈</span>
+          <span id="advisory-text">API 模型目录只是带日期的参考，不是桌面宿主或账号实际容量的实时检测。</span>
+        </div>
+
+        <div class="actions">
+          <button class="action primary" id="apply" type="button">应用到当前项目</button>
+          <button class="action" id="refresh" type="button">刷新</button>
+          <button class="action" id="reset" type="button">重置插件覆盖</button>
+        </div>
+        <div class="status-line" id="status-line" role="status" aria-live="polite">正在连接 Codex MCP Apps 桥接…</div>
+        <p class="fine-print">成功写入后，请新建 Codex 任务或重启应用以可靠生效。Auto 只移除本插件的项目覆盖；有效值仍可能来自其它 Codex 配置层。普通 ChatGPT 对话的硬窗口不会被此控件修改。</p>
+      </div>
+    </main>
+
+    <script type="module">
+      const elements = {
+        projectPath: document.querySelector("#project-path"),
+        currentProfile: document.querySelector("#current-profile"),
+        orbValue: document.querySelector("#orb-value"),
+        model: document.querySelector("#model"),
+        capacity: document.querySelector("#capacity"),
+        windowRange: document.querySelector("#window-range"),
+        windowNumber: document.querySelector("#window-number"),
+        windowValue: document.querySelector("#window-value"),
+        compactRatio: document.querySelector("#compact-ratio"),
+        ratioValue: document.querySelector("#ratio-value"),
+        compactValue: document.querySelector("#compact-value"),
+        scope: document.querySelector("#scope"),
+        advisory: document.querySelector("#advisory"),
+        advisoryText: document.querySelector("#advisory-text"),
+        apply: document.querySelector("#apply"),
+        refresh: document.querySelector("#refresh"),
+        reset: document.querySelector("#reset"),
+        statusLine: document.querySelector("#status-line"),
+        presetButtons: [...document.querySelectorAll(".preset")],
+      };
+
+      const state = {
+        snapshot: null,
+        projectRoot: "",
+        profile: "auto",
+        windowTokens: 400000,
+        compactRatio: 80,
+        compactAtOverride: 320000,
+        scope: "total",
+        catalogMap: new Map(),
+        sliderMaximum: 1050000,
+        busy: false,
+        hydrated: false,
+        authorizationToken: "",
+        preview: window.parent === window,
+        applyArmed: false,
+        resetArmed: false,
+        armTimer: null,
+      };
+
+      let nextRpcId = 1;
+      const pendingRequests = new Map();
+
+      const formatTokens = (value) => {
+        if (value === null || value === undefined || !Number.isFinite(Number(value))) return "Auto";
+        const count = Number(value);
+        if (count >= 1000000) return `${(count / 1000000).toFixed(count % 1000000 === 0 ? 0 : 2).replace(/0+$/u, "").replace(/\.$/u, "")}M`;
+        if (count >= 1000) return `${Math.round(count / 1000)}K`;
+        return count.toLocaleString();
+      };
+
+      const profileLabel = (profile) => ({ auto: "Auto", compact: "128K", balanced: "400K", "1m": "1.05M", custom: "自定义", "not configured": "未配置" }[profile] ?? profile);
+
+      const setStatus = (message, tone = "") => {
+        elements.statusLine.textContent = message;
+        elements.statusLine.className = `status-line${tone ? ` ${tone}` : ""}`;
+        window.openai?.notifyIntrinsicHeight?.();
+      };
+
+      const applyTheme = (theme) => {
+        if (theme === "dark" || theme === "light") document.documentElement.dataset.theme = theme;
+      };
+
+      const rpcNotify = (method, params) => {
+        window.parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
+      };
+
+      const rpcRequest = (method, params, timeoutMs = 12000) => new Promise((resolve, reject) => {
+        const id = nextRpcId++;
+        const timer = window.setTimeout(() => {
+          pendingRequests.delete(id);
+          reject(new Error(`宿主未响应 ${method}`));
+        }, timeoutMs);
+        pendingRequests.set(id, {
+          resolve: (value) => { window.clearTimeout(timer); resolve(value); },
+          reject: (error) => { window.clearTimeout(timer); reject(error); },
+        });
+        window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+      });
+
+      window.addEventListener("message", (event) => {
+        if (event.source !== window.parent) return;
+        const message = event.data;
+        if (!message || message.jsonrpc !== "2.0") return;
+
+        if (message.id !== undefined && pendingRequests.has(message.id)) {
+          const pending = pendingRequests.get(message.id);
+          pendingRequests.delete(message.id);
+          if (message.error) pending.reject(new Error(message.error.message ?? "MCP 请求失败"));
+          else pending.resolve(message.result);
+          return;
+        }
+
+        if (message.method === "ping" && message.id !== undefined) {
+          window.parent.postMessage({ jsonrpc: "2.0", id: message.id, result: {} }, "*");
+          return;
+        }
+
+        if (message.method === "ui/resource-teardown" && message.id !== undefined) {
+          disarm();
+          pendingRequests.forEach((pending) => pending.reject(new Error("界面已由宿主关闭")));
+          pendingRequests.clear();
+          window.parent.postMessage({ jsonrpc: "2.0", id: message.id, result: {} }, "*");
+          return;
+        }
+
+        if (message.method === "ui/notifications/host-context-changed") {
+          applyTheme(message.params?.theme);
+          return;
+        }
+
+        if (message.method === "ui/notifications/tool-result") {
+          const output = message.params?.structuredContent;
+          if (output?.kind === "context-window-control") hydrate(output, message.params?._meta);
+        }
+      }, { passive: true });
+
+      const initializeBridge = async () => {
+        const initialized = await rpcRequest("ui/initialize", {
+          appInfo: { name: "context-window-manager-widget", version: "0.2.0" },
+          appCapabilities: {},
+          protocolVersion: "2026-01-26",
+        });
+        applyTheme(initialized?.hostContext?.theme);
+        rpcNotify("ui/notifications/initialized", {});
+      };
+
+      const previewSnapshot = {
+        kind: "context-window-control",
+        status: {
+          projectRoot: "D:\\Workspace\\ExampleProject",
+          profile: "balanced",
+          model: "gpt-5.6-sol",
+          modelKnown: true,
+          catalogContextWindowTokens: 1050000,
+          configuredWindowTokens: 400000,
+          configuredCompactAtTokens: 320000,
+          warnings: [],
+        },
+        limits: { minimumWindowTokens: 8192, maximumSliderTokens: 1050000 },
+        catalog: { updated: "2026-08-20", models: [{ id: "gpt-5.6-sol", maxContextTokens: 1050000 }, { id: "chat-latest", maxContextTokens: 400000 }] },
+      };
+
+      const bridgeReady = state.preview ? Promise.resolve() : initializeBridge();
+
+      const capacityForModel = () => state.catalogMap.get(elements.model.value.trim().toLowerCase()) ?? null;
+
+      const compactTokens = () => {
+        if (Number.isInteger(state.compactAtOverride) && state.compactAtOverride > 0 && state.compactAtOverride < state.windowTokens) {
+          return state.compactAtOverride;
+        }
+        return Math.max(1, Math.min(state.windowTokens - 1, Math.floor(state.windowTokens * state.compactRatio / 100)));
+      };
+
+      const disarm = () => {
+        state.applyArmed = false;
+        state.resetArmed = false;
+        if (state.armTimer) window.clearTimeout(state.armTimer);
+        state.armTimer = null;
+      };
+
+      const armFor = (kind) => {
+        disarm();
+        if (kind === "apply") state.applyArmed = true;
+        if (kind === "reset") state.resetArmed = true;
+        state.armTimer = window.setTimeout(() => {
+          disarm();
+          render();
+          setStatus("确认已超时，项目未修改。请重新点击操作按钮。", "");
+        }, 8000);
+        render();
+      };
+
+      const validateDraft = () => {
+        if (state.profile === "auto") return { ok: true };
+        const model = elements.model.value.trim();
+        if (!model) return { ok: false, message: "非 Auto 配置需要活动模型 slug。" };
+        if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/u.test(model)) return { ok: false, message: "模型 slug 含有不支持的字符。" };
+        const capacity = capacityForModel();
+        if (!capacity) return { ok: false, message: "该模型不在带日期的精确 API 目录中；图形界面不会静默强制。" };
+        if (state.profile === "1m" && capacity < 1050000) return { ok: false, message: "1.05M 预设只对目录容量至少为 1,050,000 的精确模型 slug 启用。" };
+        if (!Number.isInteger(state.windowTokens) || state.windowTokens < 8192) return { ok: false, message: "窗口必须至少为 8,192 tokens。" };
+        if (state.windowTokens > capacity) return { ok: false, message: `草稿 ${formatTokens(state.windowTokens)} 超过目录值 ${formatTokens(capacity)}。` };
+        const compactAt = compactTokens();
+        if (compactAt <= 0 || compactAt >= state.windowTokens) return { ok: false, message: "压缩阈值必须大于 0 且小于窗口。" };
+        return { ok: true };
+      };
+
+      const render = () => {
+        const capacity = capacityForModel();
+        const isAuto = state.profile === "auto";
+        const max = capacity ?? state.sliderMaximum;
+        elements.windowRange.max = String(max);
+        elements.windowNumber.max = String(max);
+        if (!isAuto && state.windowTokens > max) state.windowTokens = max;
+
+        elements.windowRange.value = String(state.windowTokens);
+        elements.windowNumber.value = String(state.windowTokens);
+        elements.compactRatio.value = String(state.compactRatio);
+        elements.scope.value = state.scope;
+        elements.windowValue.textContent = isAuto ? "Auto" : formatTokens(state.windowTokens);
+        elements.ratioValue.textContent = `${state.compactRatio}%`;
+        elements.compactValue.textContent = isAuto ? "由其余配置决定" : formatTokens(compactTokens());
+        elements.orbValue.textContent = isAuto ? "Auto" : state.profile === "custom" ? "自定义" : formatTokens(state.windowTokens);
+        elements.capacity.textContent = capacity ? `目录容量：${formatTokens(capacity)}` : "目录容量：未知";
+
+        elements.windowRange.disabled = isAuto || state.busy;
+        elements.windowNumber.disabled = isAuto || state.busy;
+        elements.compactRatio.disabled = isAuto || state.busy;
+        elements.scope.disabled = isAuto || state.busy;
+        elements.model.disabled = state.busy;
+
+        elements.presetButtons.forEach((button) => {
+          const profile = button.dataset.profile;
+          button.setAttribute("aria-pressed", String(profile === state.profile));
+          button.disabled = state.busy || (profile !== "auto" && !capacity) || (profile === "1m" && Number(capacity) < 1050000);
+        });
+
+        const validation = validateDraft();
+        const previewBlocked = state.preview;
+        const notReady = !state.hydrated;
+        elements.apply.disabled = state.busy || previewBlocked || notReady || !validation.ok;
+        elements.refresh.disabled = state.busy || previewBlocked || notReady;
+        elements.reset.disabled = state.busy || previewBlocked || notReady;
+        elements.apply.textContent = state.busy ? "处理中…" : state.applyArmed ? "再次点击：确认应用" : "应用到当前项目";
+        elements.apply.className = `action primary${state.applyArmed ? " confirm" : ""}`;
+        elements.reset.textContent = state.resetArmed ? "再次点击：确认重置" : "重置插件覆盖";
+        elements.reset.className = `action${state.resetArmed ? " danger-confirm" : ""}`;
+
+        elements.advisory.className = `advisory${validation.ok ? "" : " error"}`;
+        elements.advisoryText.textContent = validation.ok
+          ? "API 模型目录只是带日期的参考，不是桌面宿主或账号实际容量的实时检测。"
+          : validation.message;
+
+        window.openai?.setWidgetState?.({
+          privateContent: { profile: state.profile, windowTokens: state.windowTokens, compactRatio: state.compactRatio, scope: state.scope },
+        });
+        window.openai?.notifyIntrinsicHeight?.();
+      };
+
+      const hydrate = (snapshot, responseMetadata = null) => {
+        if (!snapshot?.status) return;
+        state.snapshot = snapshot;
+        state.hydrated = true;
+        const nextProjectRoot = String(snapshot.status.projectRoot ?? "");
+        if (state.projectRoot && state.projectRoot.toLowerCase() !== nextProjectRoot.toLowerCase()) state.authorizationToken = "";
+        state.projectRoot = nextProjectRoot;
+        const grant = responseMetadata?.["context-window-manager/authorization"];
+        if (typeof grant?.projectRoot === "string" && typeof grant?.token === "string" &&
+            grant.projectRoot.toLowerCase() === state.projectRoot.toLowerCase() && /^[a-f0-9]{64}$/u.test(grant.token)) {
+          state.authorizationToken = grant.token;
+        }
+        state.sliderMaximum = Number(snapshot.limits?.maximumSliderTokens) || 1050000;
+        state.catalogMap = new Map((snapshot.catalog?.models ?? []).map((entry) => [String(entry.id).toLowerCase(), Number(entry.maxContextTokens)]));
+
+        elements.projectPath.textContent = state.projectRoot || "未提供工作区";
+        elements.projectPath.title = state.projectRoot;
+        elements.model.value = String(snapshot.status.model ?? elements.model.value ?? "");
+        const current = String(snapshot.status.profile ?? "not configured");
+        const configured = Number(snapshot.status.configuredWindowTokens);
+        const configuredSuffix = Number.isInteger(configured) && current !== "custom" ? ` · 实际 ${formatTokens(configured)}` : "";
+        elements.currentProfile.textContent = `当前：${profileLabel(current)}${configuredSuffix}`;
+
+        if (current === "auto" || current === "not configured") {
+          state.profile = "auto";
+          state.compactAtOverride = null;
+        } else if (["compact", "balanced", "1m", "custom"].includes(current)) {
+          state.profile = current;
+        }
+        if (Number.isInteger(snapshot.status.configuredWindowTokens)) {
+          state.windowTokens = snapshot.status.configuredWindowTokens;
+          const compactAt = Number(snapshot.status.configuredCompactAtTokens);
+          if (compactAt > 0 && compactAt < state.windowTokens) {
+            state.compactAtOverride = compactAt;
+            state.compactRatio = Math.round(compactAt / state.windowTokens * 100);
+          }
+        }
+        if (["total", "body_after_prefix"].includes(snapshot.status.configuredCompactScope)) {
+          state.scope = snapshot.status.configuredCompactScope;
+        }
+        disarm();
+        render();
+
+        const warning = snapshot.status.warnings?.[0];
+        if (state.preview) setStatus("独立预览模式：控件可操作，但写入按钮已禁用。", "");
+        else if (snapshot.action) setStatus("项目配置已更新。请新建 Codex 任务或重启应用以可靠生效。", "success");
+        else if (warning) setStatus(String(warning), "error");
+        else setStatus("已读取当前项目配置。拖动只修改草稿。", "success");
+      };
+
+      const callTool = async (name, args) => {
+        await bridgeReady;
+        const response = await rpcRequest("tools/call", { name, arguments: args });
+        if (response?.isError || response?.structuredContent?.ok === false) {
+          const detail = response?.structuredContent?.error ?? response?.content?.[0]?.text ?? "工具调用失败";
+          throw new Error(detail);
+        }
+        return response?.structuredContent;
+      };
+
+      const setBusy = (busy) => {
+        state.busy = busy;
+        if (busy) disarm();
+        render();
+      };
+
+      const selectProfile = (profile) => {
+        disarm();
+        const capacity = capacityForModel();
+        state.profile = profile;
+        if (profile === "auto") state.compactAtOverride = null;
+        if (profile === "compact") { state.windowTokens = Math.min(capacity, 128000); state.compactRatio = 75; state.compactAtOverride = Math.floor(state.windowTokens * 0.75); }
+        if (profile === "balanced") { state.windowTokens = Math.min(capacity, 400000); state.compactRatio = 80; state.compactAtOverride = Math.floor(state.windowTokens * 0.80); }
+        if (profile === "1m") { state.windowTokens = 1050000; state.compactRatio = Math.round(850000 / 1050000 * 100); state.compactAtOverride = 850000; }
+        render();
+        setStatus("草稿已更改；尚未写入项目。", "");
+      };
+
+      elements.presetButtons.forEach((button) => button.addEventListener("click", () => selectProfile(button.dataset.profile)));
+
+      elements.model.addEventListener("input", () => {
+        disarm();
+        render();
+        setStatus("模型目录匹配已在本地更新；尚未写入项目。", "");
+      });
+
+      const updateCustomWindow = (value) => {
+        if (String(value).trim() === "") return;
+        const parsed = Number(value);
+        if (!Number.isInteger(parsed)) return;
+        disarm();
+        state.profile = "custom";
+        state.windowTokens = parsed;
+        state.compactAtOverride = null;
+        render();
+        setStatus("自定义草稿已更改；尚未写入项目。", "");
+      };
+
+      elements.windowRange.addEventListener("input", (event) => updateCustomWindow(event.target.value));
+      elements.windowNumber.addEventListener("input", (event) => updateCustomWindow(event.target.value));
+      elements.compactRatio.addEventListener("input", (event) => {
+        disarm();
+        state.profile = "custom";
+        state.compactRatio = Number(event.target.value);
+        state.compactAtOverride = null;
+        render();
+        setStatus("压缩阈值草稿已更改；尚未写入项目。", "");
+      });
+      elements.scope.addEventListener("change", (event) => {
+        disarm();
+        state.scope = event.target.value;
+        render();
+        setStatus("阈值范围草稿已更改；尚未写入项目。", "");
+      });
+
+      elements.apply.addEventListener("click", async () => {
+        if (!state.applyArmed) {
+          armFor("apply");
+          setStatus(`请核对：${profileLabel(state.profile)}${state.profile === "auto" ? "（移除插件覆盖）" : ` / ${formatTokens(state.windowTokens)} / ${formatTokens(compactTokens())} 压缩`}。再次点击确认。`, "");
+          return;
+        }
+
+        setBusy(true);
+        setStatus("正在安全写入项目配置…", "");
+        try {
+          const args = { projectRoot: state.projectRoot, profile: state.profile };
+          if (state.authorizationToken) args.authorizationToken = state.authorizationToken;
+          if (state.profile !== "auto") {
+            args.model = elements.model.value.trim();
+            args.scope = state.scope;
+          }
+          if (state.profile === "custom") {
+            args.tokens = state.windowTokens;
+            args.compactAt = compactTokens();
+          }
+          const output = await callTool("apply_context_window_profile", args);
+          hydrate(output);
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : String(error), "error");
+        } finally {
+          setBusy(false);
+        }
+      });
+
+      elements.refresh.addEventListener("click", async () => {
+        setBusy(true);
+        setStatus("正在重新读取项目配置…", "");
+        try {
+          const output = await callTool("get_context_window_status", { projectRoot: state.projectRoot, model: elements.model.value.trim() || undefined });
+          hydrate(output);
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : String(error), "error");
+        } finally {
+          setBusy(false);
+        }
+      });
+
+      elements.reset.addEventListener("click", async () => {
+        if (!state.resetArmed) {
+          armFor("reset");
+          setStatus("重置只删除本插件的标记块和状态。再次点击确认。", "");
+          return;
+        }
+
+        setBusy(true);
+        setStatus("正在移除本插件的项目覆盖…", "");
+        try {
+          const output = await callTool("reset_context_window_profile", {
+            projectRoot: state.projectRoot,
+            model: elements.model.value.trim() || undefined,
+            authorizationToken: state.authorizationToken || undefined,
+          });
+          hydrate(output);
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : String(error), "error");
+        } finally {
+          setBusy(false);
+        }
+      });
+
+      applyTheme(window.openai?.theme);
+
+      if (state.preview) {
+        hydrate(previewSnapshot);
+      } else {
+        const compatibilityOutput = window.openai?.toolOutput;
+        if (compatibilityOutput?.kind === "context-window-control") hydrate(compatibilityOutput, window.openai?.toolResponseMetadata);
+        bridgeReady.catch((error) => setStatus(`无法初始化 MCP Apps 桥接：${error.message}`, "error"));
+        render();
+      }
+    </script>
+  </body>
+</html>
