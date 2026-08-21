@@ -10,6 +10,7 @@ __pycache__/
 # Generated build and test output
 artifacts/
 bin/
+dist/
 obj/
 out/
 .vs/

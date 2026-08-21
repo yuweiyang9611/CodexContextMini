@@ -1,5 +1,7 @@
 # Context Window Manager for Codex
 
+[![CI](https://github.com/yuweiyang9611/CodexContextPlugin/actions/workflows/ci-release.yml/badge.svg)](https://github.com/yuweiyang9611/CodexContextPlugin/actions/workflows/ci-release.yml)
+
 An unofficial, Windows-first Codex plugin for managing project-scoped context-window and automatic-compaction settings. It provides an in-conversation graphical slider, safe presets, a PowerShell CLI, and a bundled skill that explains the limits before changing configuration.
 
 > [!IMPORTANT]
@@ -144,11 +146,40 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
   -File .\tests\context-window.tests.ps1
 
 node --test .\tests\context-window-mcp.tests.mjs
+
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+  -File .\tests\release-automation.tests.ps1
 ```
+
+## Versioning and automated releases
+
+The release gate is the SemVer value in `plugins/context-window-manager/.codex-plugin/plugin.json`. Its build metadata is ignored for public releases:
+
+```text
+0.2.0+codex.local-build  ->  v0.2.0
+```
+
+Every push and pull request runs package validation plus the PowerShell and Node.js regression suites. On a push to `main`, automation compares the manifest's release version before and after that push. It creates a GitHub Release only when the SemVer release portion changed and the new tag is not already owned by another commit. Ordinary commits, including cachebuster-only changes after `+`, run CI but do not create a Release. The commit that first adds this automation establishes a baseline and does not publish the existing version.
+
+Use the version helper when a public release is intended:
+
+```powershell
+# Accepts 0.2.1 or v0.2.1 and updates the manifest, MCP server, and widget together.
+.\scripts\set-version.ps1 0.2.1
+```
+
+Commit those version changes and merge them into `main`. After CI succeeds, automation publishes:
+
+- `context-window-manager-vX.Y.Z.zip` — the standalone plugin directory.
+- `CodexContextPlugin-vX.Y.Z.zip` — the installable local-marketplace layout.
+- `SHA256SUMS.txt` — SHA-256 checksums for both archives.
+
+For example, six commits can remain on `0.2.0` without producing new releases. Running `set-version.ps1 0.2.1` and merging that change creates `v0.2.1` exactly once.
 
 ## Repository layout
 
 ```text
+.github/workflows/ci-release.yml
 .agents/plugins/marketplace.json
 plugins/context-window-manager/
   .codex-plugin/plugin.json
@@ -160,7 +191,12 @@ plugins/context-window-manager/
   scripts/model-capabilities.json
   skills/dynamic-context/
   ui/context-window-control.html
+scripts/
+  build-release.ps1
+  resolve-version-change.ps1
+  set-version.ps1
 tests/
+  validate-package.ps1
 ```
 
 ## 中文说明
