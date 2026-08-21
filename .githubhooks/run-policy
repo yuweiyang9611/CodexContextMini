@@ -1,0 +1,23 @@
+#!/bin/sh
+set -eu
+
+case "$0" in
+  */*) hook_dir=${0%/*} ;;
+  *) hook_dir=. ;;
+esac
+mode=${1:-}
+shift || true
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "Email privacy hook requires Node.js." >&2
+  exit 1
+fi
+
+script_path="$hook_dir/check-email-policy.mjs"
+
+if [ "$mode" = "CommitMessage" ]; then
+  message_file=${1:-}
+  exec node "$script_path" --mode commit-message --message-file "$message_file"
+fi
+
+exec node "$script_path" --mode "$mode"

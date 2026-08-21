@@ -2,7 +2,6 @@ name: CI
 
 on:
   push:
-    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -23,6 +22,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node.js 24
@@ -30,6 +30,14 @@ jobs:
         with:
           node-version: '24'
           check-latest: false
+
+      - name: Enforce email privacy policy
+        shell: powershell
+        run: node .\.githubhooks\check-email-policy.mjs --mode repository
+
+      - name: Test email privacy hooks
+        shell: powershell
+        run: node --test .\tests\email-policy.tests.mjs
 
       - name: Validate plugin package
         shell: powershell

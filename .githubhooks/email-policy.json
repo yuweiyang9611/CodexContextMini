@@ -1,0 +1,16 @@
+{
+  "description": "Block personal email addresses from Git metadata, messages, and repository content.",
+  "maxBlobBytes": 33554432,
+  "allowedLocalGitEmailPatterns": [
+    "^[^@\\s]+@users\\.noreply\\.github\\.com$"
+  ],
+  "allowedCommitEmailPatterns": [
+    "^[^@\\s]+@users\\.noreply\\.github\\.com$",
+    "^noreply@github\\.com$"
+  ],
+  "allowedContentEmailPatterns": [
+    "^[^@\\s]+@users\\.noreply\\.github\\.com$",
+    "^noreply@github\\.com$",
+    "^[^@\\s]+@(?:[^@\\s]+\\.)+invalid$"
+  ]
+}

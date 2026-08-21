@@ -27,6 +27,16 @@ An unofficial, Windows-first Codex plugin for managing project-scoped context-wi
 
 The runtime uses only Node.js built-in modules and Windows PowerShell. No `npm install` is required.
 
+## Email privacy hooks
+
+After cloning, enable the committed repository hooks once:
+
+```powershell
+.\.githubhooks\install.ps1
+```
+
+The hooks reject personal addresses in Git identity metadata, commit messages, staged blobs and paths, and commits about to be pushed. CI runs the same policy across all reachable history. GitHub-provided `users.noreply.github.com` addresses, GitHub's system committer, and reserved `.invalid` test addresses are allowed. See [`.githubhooks/README.md`](.githubhooks/README.md) for setup and policy details.
+
 ## Install from GitHub
 
 Clone the repository:
@@ -147,6 +157,8 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
 
 node --test .\tests\context-window-mcp.tests.mjs
 
+node --test .\tests\email-policy.tests.mjs
+
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
   -File .\tests\release-automation.tests.ps1
 ```
@@ -180,6 +192,7 @@ For example, six commits can remain on `0.2.0` without producing new releases. R
 
 ```text
 .github/workflows/ci-release.yml
+.githubhooks/
 .agents/plugins/marketplace.json
 plugins/context-window-manager/
   .codex-plugin/plugin.json
@@ -196,6 +209,7 @@ scripts/
   resolve-version-change.ps1
   set-version.ps1
 tests/
+  email-policy.tests.mjs
   validate-package.ps1
 ```
 
