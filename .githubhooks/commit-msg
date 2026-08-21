@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+case "$0" in
+  */*) hook_dir=${0%/*} ;;
+  *) hook_dir=. ;;
+esac
+exec "$hook_dir/run-policy" CommitMessage "$1"
