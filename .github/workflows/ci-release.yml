@@ -48,7 +48,7 @@ jobs:
         shell: powershell
         run: powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1 -Configuration Release
 
-      - name: Test Context Mini Core
+      - name: Test Context Mini
         shell: powershell
         run: powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\test.ps1 -Configuration Release -NoBuild
 

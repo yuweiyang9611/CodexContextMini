@@ -41,6 +41,10 @@ You can also pass a project explicitly:
 
 The window includes a **切换…** button for selecting another local project.
 
+## Appearance
+
+The header offers three color schemes: **跟随系统**, **白色**, and **黑色**. System mode follows the current Windows app theme while the program is running. The selected preference is stored in `%LOCALAPPDATA%\ContextMini\appearance.txt`; it is never written into the selected project. Windows high-contrast mode temporarily takes priority and uses system colors.
+
 ## Profiles
 
 | Profile | Context request | Auto-compact threshold |
@@ -80,8 +84,15 @@ Auto removes only the managed block. Content outside it is preserved. A valid le
 ## Tests
 
 ```powershell
-# Context configuration Core: 22 regression cases
+# Context configuration Core and appearance settings: 24 regression cases
 dotnet run --project .\tests\ContextMini.Tests\ContextMini.Tests.csproj -c Release
+
+# WPF theme switching, persistence retry, high contrast, and minimum layout: 4 cases
+dotnet run --project .\tests\ContextMini.WpfTests\ContextMini.WpfTests.csproj -c Release
+
+# Light/Dark resource symmetry, dynamic references, and contrast thresholds
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+  -File .\tests\appearance-xaml.tests.ps1
 
 # Repository email privacy hooks
 node --test .\tests\email-policy.tests.mjs

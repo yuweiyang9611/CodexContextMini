@@ -2,7 +2,7 @@ using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media;
+using System.Windows.Interop;
 using System.Windows.Threading;
 using ContextMini.Core;
 using Microsoft.Win32;
@@ -11,33 +11,110 @@ namespace ContextMini;
 
 public partial class MainWindow : Window
 {
-    private static readonly Brush SelectedPresetBrush = new SolidColorBrush(Color.FromRgb(23, 105, 224));
-    private static readonly Brush SelectedPresetTextBrush = Brushes.White;
-    private static readonly Brush NormalPresetBrush = Brushes.White;
-    private static readonly Brush NormalPresetTextBrush = new SolidColorBrush(Color.FromRgb(38, 52, 69));
+    private const int WmSettingChange = 0x001A;
+    private const int WmSystemColorChange = 0x0015;
+    private const int WmThemeChanged = 0x031A;
 
+    private readonly AppearanceManager _appearance;
     private readonly ProjectConfigStore _store = new();
     private readonly DispatcherTimer _monitor;
     private readonly string _initialProject;
     private ConfigSnapshot? _snapshot;
     private ContextPlan _draft = ContextPolicy.Auto;
     private string? _projectRoot;
+    private HwndSource? _windowSource;
+    private HwndSourceHook? _themeMessageHook;
     private bool _updatingUi;
+    private bool _updatingAppearance;
     private bool _dirty;
     private bool _externalConflict;
     private bool _monitorBusy;
+    private bool _themeRefreshQueued;
+    private bool _closed;
 
-    public MainWindow(string initialProject)
+    internal MainWindow(string initialProject, AppearanceManager appearance)
     {
         _initialProject = initialProject;
+        _appearance = appearance ?? throw new ArgumentNullException(nameof(appearance));
+        _updatingAppearance = true;
         InitializeComponent();
+        UpdateAppearanceSelector();
+        _updatingAppearance = false;
         _monitor = new DispatcherTimer(DispatcherPriority.Background)
         {
             Interval = TimeSpan.FromMilliseconds(1500),
         };
         _monitor.Tick += Monitor_Tick;
         Loaded += MainWindow_Loaded;
-        Closed += (_, _) => _monitor.Stop();
+    }
+
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        _windowSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
+        _themeMessageHook = ThemeWindowProc;
+        _windowSource?.AddHook(_themeMessageHook);
+        QueueThemeRefresh();
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _closed = true;
+        _monitor.Stop();
+        if (_windowSource is not null && _themeMessageHook is not null)
+        {
+            _windowSource.RemoveHook(_themeMessageHook);
+        }
+
+        _themeMessageHook = null;
+        _windowSource = null;
+        base.OnClosed(e);
+    }
+
+    private IntPtr ThemeWindowProc(
+        IntPtr hwnd,
+        int message,
+        IntPtr wParam,
+        IntPtr lParam,
+        ref bool handled)
+    {
+        if (message is WmSettingChange or WmSystemColorChange or WmThemeChanged) QueueThemeRefresh();
+        return IntPtr.Zero;
+    }
+
+    private void QueueThemeRefresh()
+    {
+        if (_closed || _themeRefreshQueued) return;
+        _themeRefreshQueued = true;
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+        {
+            _themeRefreshQueued = false;
+            if (_closed) return;
+            try
+            {
+                _appearance.RefreshSystemTheme();
+            }
+            catch (Exception exception)
+            {
+                System.Diagnostics.Debug.WriteLine($"System appearance refresh failed: {exception}");
+            }
+        }));
+    }
+
+    private void UpdateAppearanceSelector()
+    {
+        var wasUpdating = _updatingAppearance;
+        _updatingAppearance = true;
+        try
+        {
+            SystemAppearanceButton.IsChecked = _appearance.Preference == AppearancePreference.System;
+            LightAppearanceButton.IsChecked = _appearance.Preference == AppearancePreference.Light;
+            DarkAppearanceButton.IsChecked = _appearance.Preference == AppearancePreference.Dark;
+        }
+        finally
+        {
+            _updatingAppearance = wasUpdating;
+        }
     }
 
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -217,8 +294,12 @@ public partial class MainWindow : Window
 
     private static void SetPresetState(Button button, bool selected)
     {
-        button.Background = selected ? SelectedPresetBrush : NormalPresetBrush;
-        button.Foreground = selected ? SelectedPresetTextBrush : NormalPresetTextBrush;
+        button.SetResourceReference(
+            Control.BackgroundProperty,
+            selected ? "SelectedControlBackgroundBrush" : "ControlBackgroundBrush");
+        button.SetResourceReference(
+            Control.ForegroundProperty,
+            selected ? "SelectedControlTextBrush" : "PrimaryTextBrush");
     }
 
     private void UpdateApplyState()
@@ -240,6 +321,35 @@ public partial class MainWindow : Window
         UpdateDraftText();
         UpdatePresetButtons();
         RecalculateDirty();
+    }
+
+    private void Appearance_Click(object sender, RoutedEventArgs e)
+    {
+        if (_updatingAppearance || sender is not RadioButton { Tag: AppearancePreference preference }) return;
+        try
+        {
+            var result = _appearance.SetPreference(preference);
+            UpdatePresetButtons();
+            if (!result.Saved)
+            {
+                MessageBox.Show(
+                    this,
+                    $"主题已切换，但无法保存外观选择：{result.ErrorMessage}",
+                    "无法保存外观选择",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+        }
+        catch (Exception exception)
+        {
+            UpdateAppearanceSelector();
+            MessageBox.Show(
+                this,
+                exception.Message,
+                "无法切换主题",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
     }
 
     private void Auto_Click(object sender, RoutedEventArgs e) => SetDraft(ContextPolicy.Auto);

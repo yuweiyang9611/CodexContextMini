@@ -13,6 +13,8 @@ internal static class Program
     private static int Main()
     {
         Run("policy presets and custom bounds", PolicyPresets);
+        Run("appearance preferences parse and resolve", AppearancePreferences);
+        Run("appearance settings round-trip safely", AppearanceSettingsRoundTrip);
         Run("balanced apply preserves unrelated TOML", BalancedApplyPreservesToml);
         Run("Auto removes only the managed block", AutoRemovesManagedBlock);
         Run("Auto on a missing config creates nothing", AutoMissingCreatesNothing);
@@ -55,6 +57,60 @@ internal static class Program
         Equal(80_000L, ContextPolicy.Custom(100_000).CompactAtTokens);
         Throws<ArgumentOutOfRangeException>(() => ContextPolicy.Custom(8_191));
         Throws<ArgumentOutOfRangeException>(() => ContextPolicy.Custom(1_050_001));
+    }
+
+    private static void AppearancePreferences()
+    {
+        Equal(AppearancePreference.System, AppearancePreferenceCodec.ParseOrSystem(null));
+        Equal(AppearancePreference.System, AppearancePreferenceCodec.ParseOrSystem("unknown"));
+        True(AppearancePreferenceCodec.TryParse(" DARK ", out var dark));
+        Equal(AppearancePreference.Dark, dark);
+        True(AppearancePreferenceCodec.TryParse("Light", out var light));
+        Equal(AppearancePreference.Light, light);
+        False(AppearancePreferenceCodec.TryParse("sepia", out var fallback));
+        Equal(AppearancePreference.System, fallback);
+        Equal("system", AppearancePreferenceCodec.Format(AppearancePreference.System));
+        Equal("light", AppearancePreferenceCodec.Format(AppearancePreference.Light));
+        Equal("dark", AppearancePreferenceCodec.Format(AppearancePreference.Dark));
+        True(AppearancePreferenceCodec.ResolveDark(AppearancePreference.System, true));
+        False(AppearancePreferenceCodec.ResolveDark(AppearancePreference.System, false));
+        False(AppearancePreferenceCodec.ResolveDark(AppearancePreference.Light, true));
+        True(AppearancePreferenceCodec.ResolveDark(AppearancePreference.Dark, false));
+        Throws<ArgumentOutOfRangeException>(() =>
+            AppearancePreferenceCodec.Format((AppearancePreference)99));
+    }
+
+    private static void AppearanceSettingsRoundTrip()
+    {
+        WithProject(root =>
+        {
+            var path = Path.Combine(root, "preferences", "appearance.txt");
+            var store = new AppearanceSettingsStore(path);
+            Equal(AppearancePreference.System, store.Load());
+
+            foreach (var preference in Enum.GetValues<AppearancePreference>())
+            {
+                store.Save(preference);
+                Equal(preference, store.Load());
+                Equal(AppearancePreferenceCodec.Format(preference) + Environment.NewLine, File.ReadAllText(path));
+            }
+
+            File.WriteAllText(path, "sepia\n", Utf8NoBom);
+            Equal(AppearancePreference.System, store.Load());
+            File.WriteAllBytes(path, [0xFF, 0xFE]);
+            Equal(AppearancePreference.System, store.Load());
+            File.WriteAllBytes(path, Enumerable.Repeat((byte)'x', AppearanceSettingsStore.MaximumSettingsBytes + 1).ToArray());
+            Equal(AppearancePreference.System, store.Load());
+            using (var oversized = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                oversized.SetLength(16 * 1024 * 1024);
+            }
+            Equal(AppearancePreference.System, store.Load());
+
+            store.Save(AppearancePreference.Dark);
+            Equal(AppearancePreference.Dark, store.Load());
+            False(Directory.EnumerateFiles(Path.GetDirectoryName(path)!, "*.tmp").Any());
+        });
     }
 
     private static void BalancedApplyPreservesToml()
