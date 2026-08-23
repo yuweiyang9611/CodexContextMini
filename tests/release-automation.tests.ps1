@@ -5,127 +5,92 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
-$repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$resolver = Join-Path $repositoryRoot 'scripts\resolve-version-change.ps1'
-$setter = Join-Path $repositoryRoot 'scripts\set-version.ps1'
-$utf8 = New-Object System.Text.UTF8Encoding($false)
-$passed = 0
+$root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$resolver=Join-Path $root 'scripts\resolve-version-change.ps1'
+$setter=Join-Path $root 'scripts\set-version.ps1'
+$utf8=New-Object Text.UTF8Encoding($false)
+$passed=0
 
-function Assert-True {
-    param([bool]$Condition, [string]$Message)
-    if (-not $Condition) { throw $Message }
-}
-
-function Invoke-Git {
-    param([string]$Root, [Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
-    $savedPreference = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = 'SilentlyContinue'
-        $output = & git -C $Root @Arguments 2>&1
-        $exitCode = $LASTEXITCODE
-    }
-    finally {
-        $ErrorActionPreference = $savedPreference
-    }
-    if ($exitCode -ne 0) { throw "git $($Arguments -join ' ') failed: $($output -join ' ')" }
+function Invoke-Git([string]$Repo,[Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments){
+    $saved=$ErrorActionPreference
+    try{ $ErrorActionPreference='SilentlyContinue'; $output=@(& git -C $Repo @Arguments 2>&1); $code=$LASTEXITCODE }
+    finally{ $ErrorActionPreference=$saved }
+    if($code -ne 0){ throw "git $($Arguments -join ' ') failed." }
     return $output
 }
-
-function Read-Plan {
-    param([string]$Root, [string]$Before, [string]$Current)
-    $output = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $resolver `
-        -RepositoryRoot $Root -BeforeCommit $Before -CurrentCommit $Current -Json
-    if ($LASTEXITCODE -ne 0) { throw "resolve-version-change.ps1 failed with exit code $LASTEXITCODE." }
-    return (($output -join [Environment]::NewLine) | ConvertFrom-Json)
+function Read-Plan([string]$Repo,[string]$Before,[string]$Current){
+    $output=@(& powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $resolver -RepositoryRoot $Repo -BeforeCommit $Before -CurrentCommit $Current -Json)
+    if($LASTEXITCODE -ne 0){ throw 'resolve-version-change.ps1 failed.' }
+    return (($output -join [Environment]::NewLine)|ConvertFrom-Json)
 }
+function Write-Version([string]$Repo,[string]$Version){ [IO.File]::WriteAllText((Join-Path $Repo 'VERSION'),$Version+"`n",$utf8) }
+function Assert([bool]$Condition,[string]$Message){ if(-not $Condition){ throw $Message } }
 
-function Write-Manifest {
-    param([string]$Root, [string]$Version)
-    $directory = Join-Path $Root 'plugins\context-window-manager\.codex-plugin'
-    $null = New-Item -ItemType Directory -Path $directory -Force
-    $json = "{`n  `"name`": `"context-window-manager`",`n  `"version`": `"$Version`"`n}`n"
-    [System.IO.File]::WriteAllText((Join-Path $directory 'plugin.json'), $json, $utf8)
+$temp=Join-Path ([IO.Path]::GetTempPath()) ('context-mini-release-tests-'+[guid]::NewGuid().ToString('N'))
+$null=New-Item -ItemType Directory -Path $temp
+try{
+    $null=Invoke-Git $temp init -b main
+    $null=Invoke-Git $temp config user.name release-test
+    $null=Invoke-Git $temp config user.email '123456+release-test@users.noreply.github.com'
+    Write-Version $temp '0.2.0'
+    $null=Invoke-Git $temp add -- VERSION
+    $null=Invoke-Git $temp commit -m baseline
+    $baseline=([string](Invoke-Git $temp rev-parse HEAD|Select-Object -Last 1)).Trim()
+
+    [IO.File]::WriteAllText((Join-Path $temp 'change.txt'),"ordinary change`n",$utf8)
+    $null=Invoke-Git $temp add -- change.txt
+    $null=Invoke-Git $temp commit -m change
+    $ordinary=([string](Invoke-Git $temp rev-parse HEAD|Select-Object -Last 1)).Trim()
+    $plan=Read-Plan $temp $baseline $ordinary
+    Assert (-not [bool]$plan.changed) 'Ordinary code changes must not release.'
+    Write-Output 'PASS ordinary code changes do not release'; $passed++
+
+    $scriptDir=Join-Path $temp 'scripts'; $null=New-Item -ItemType Directory -Path $scriptDir
+    Copy-Item -LiteralPath $setter -Destination (Join-Path $scriptDir 'set-version.ps1')
+    & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptDir 'set-version.ps1') 'v0.2.1' | Out-Null
+    if($LASTEXITCODE -ne 0){ throw 'set-version.ps1 failed.' }
+    Assert (([IO.File]::ReadAllText((Join-Path $temp 'VERSION')).Trim()) -ceq '0.2.1') 'VERSION was not updated.'
+    $null=Invoke-Git $temp add -- VERSION
+    $null=Invoke-Git $temp commit -m bump
+    $bump=([string](Invoke-Git $temp rev-parse HEAD|Select-Object -Last 1)).Trim()
+    $plan=Read-Plan $temp $ordinary $bump
+    Assert ([bool]$plan.changed) 'A manual VERSION change must release.'
+    Assert ([string]$plan.currentReleaseVersion -ceq '0.2.1') 'Unexpected current version.'
+    Assert ([string]$plan.tag -ceq 'v0.2.1') 'Unexpected tag.'
+    Write-Output 'PASS manual VERSION change triggers one release'; $passed++
+
+    [IO.File]::WriteAllText((Join-Path $temp 'fix.txt'),"CI fix`n",$utf8)
+    $null=Invoke-Git $temp add -- fix.txt
+    $null=Invoke-Git $temp commit -m fix
+    $fix=([string](Invoke-Git $temp rev-parse HEAD|Select-Object -Last 1)).Trim()
+    $plan=Read-Plan $temp $bump $fix
+    Assert ([bool]$plan.changed) 'The same bumped VERSION must remain eligible after a CI-fix commit.'
+    Assert ([string]$plan.versionCommit -ceq $bump) 'Version introduction commit drifted.'
+    Write-Output 'PASS failed version CI can be repaired without another bump'; $passed++
+    $plan=Read-Plan $temp ('f'*40) $fix
+    Assert (-not [bool]$plan.changed) 'Unavailable previous commit must fail closed.'
+    Write-Output 'PASS unavailable previous commit establishes no-release baseline'; $passed++
+
+    $noVersion=Join-Path $temp 'no-version'; $null=New-Item -ItemType Directory -Path $noVersion
+    $null=Invoke-Git $noVersion init -b main; $null=Invoke-Git $noVersion config user.name release-test; $null=Invoke-Git $noVersion config user.email '123456+release-test@users.noreply.github.com'
+    [IO.File]::WriteAllText((Join-Path $noVersion 'README.md'),"baseline`n",$utf8); $null=Invoke-Git $noVersion add -- README.md; $null=Invoke-Git $noVersion commit -m baseline
+    $before=([string](Invoke-Git $noVersion rev-parse HEAD|Select-Object -Last 1)).Trim()
+    Write-Version $noVersion '1.0.0'; $null=Invoke-Git $noVersion add -- VERSION; $null=Invoke-Git $noVersion commit -m version
+    $after=([string](Invoke-Git $noVersion rev-parse HEAD|Select-Object -Last 1)).Trim()
+    $plan=Read-Plan $noVersion $before $after
+    Assert (-not [bool]$plan.changed) 'First VERSION file must establish a baseline.'
+    Write-Output 'PASS first VERSION file establishes no-release baseline'; $passed++
+
+    $savedPreference=$ErrorActionPreference
+    try{ $ErrorActionPreference='SilentlyContinue'; $invalid=@(& powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptDir 'set-version.ps1') '1.02.3' -WhatIf 2>&1); $invalidCode=$LASTEXITCODE }
+    finally{ $ErrorActionPreference=$savedPreference }
+    Assert ($invalidCode -ne 0) 'Invalid SemVer was accepted.'
+    Write-Output 'PASS invalid SemVer is rejected'; $passed++
+    $savedPreference=$ErrorActionPreference
+    try{ $ErrorActionPreference='SilentlyContinue'; $downgrade=@(& powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptDir 'set-version.ps1') '0.2.0' -WhatIf 2>&1); $downgradeCode=$LASTEXITCODE }
+    finally{ $ErrorActionPreference=$savedPreference }
+    Assert ($downgradeCode -ne 0) 'Version downgrade was accepted.'
+    Write-Output 'PASS version downgrade is rejected'; $passed++
 }
-
-$tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('context-window-release-tests-' + [guid]::NewGuid().ToString('N'))
-$null = New-Item -ItemType Directory -Path $tempRoot
-try {
-    $null = Invoke-Git $tempRoot init -b main
-    $null = Invoke-Git $tempRoot config user.name 'release-test'
-    $null = Invoke-Git $tempRoot config user.email 'release-test@example.invalid'
-
-    Write-Manifest $tempRoot '1.0.0+codex.first'
-    $null = Invoke-Git $tempRoot add -- 'plugins/context-window-manager/.codex-plugin/plugin.json'
-    $null = Invoke-Git $tempRoot commit -m 'baseline'
-    $baseline = ([string](Invoke-Git $tempRoot rev-parse HEAD | Select-Object -Last 1)).Trim()
-
-    Write-Manifest $tempRoot '1.0.0+codex.second'
-    $null = Invoke-Git $tempRoot add -- 'plugins/context-window-manager/.codex-plugin/plugin.json'
-    $null = Invoke-Git $tempRoot commit -m 'cachebuster only'
-    $cachebuster = ([string](Invoke-Git $tempRoot rev-parse HEAD | Select-Object -Last 1)).Trim()
-
-    $plan = Read-Plan $tempRoot $baseline $cachebuster
-    Assert-True (-not [bool]$plan.changed) 'Build metadata alone must not trigger a release.'
-    Assert-True ([string]$plan.currentReleaseVersion -ceq '1.0.0') 'Unexpected release version after cachebuster change.'
-    Write-Output 'PASS build metadata does not trigger a release'
-    $passed++
-
-    Write-Manifest $tempRoot '1.0.1'
-    $null = Invoke-Git $tempRoot add -- 'plugins/context-window-manager/.codex-plugin/plugin.json'
-    $null = Invoke-Git $tempRoot commit -m 'release bump'
-    $release = ([string](Invoke-Git $tempRoot rev-parse HEAD | Select-Object -Last 1)).Trim()
-
-    $plan = Read-Plan $tempRoot $cachebuster $release
-    Assert-True ([bool]$plan.changed) 'A release SemVer change must trigger a release.'
-    Assert-True ([string]$plan.previousReleaseVersion -ceq '1.0.0') 'Unexpected previous release version.'
-    Assert-True ([string]$plan.currentReleaseVersion -ceq '1.0.1') 'Unexpected current release version.'
-    Assert-True ([string]$plan.tag -ceq 'v1.0.1') 'Unexpected release tag.'
-    Write-Output 'PASS release SemVer change triggers exactly one new version'
-    $passed++
-
-    $plan = Read-Plan $tempRoot ('f' * 40) $release
-    Assert-True (-not [bool]$plan.changed) 'An unavailable previous commit must skip release safely.'
-    Assert-True ([string]$plan.reason -match 'unavailable') 'Unavailable previous commit diagnostic is missing.'
-    Write-Output 'PASS unavailable previous commit establishes a safe no-release baseline'
-    $passed++
-
-    $emptyRoot = Join-Path $tempRoot 'empty-history'
-    $null = New-Item -ItemType Directory -Path $emptyRoot
-    $null = Invoke-Git $emptyRoot init -b main
-    $null = Invoke-Git $emptyRoot config user.name 'release-test'
-    $null = Invoke-Git $emptyRoot config user.email 'release-test@example.invalid'
-    [System.IO.File]::WriteAllText((Join-Path $emptyRoot 'README.md'), "baseline`n", $utf8)
-    $null = Invoke-Git $emptyRoot add -- README.md
-    $null = Invoke-Git $emptyRoot commit -m 'no manifest'
-    $withoutManifest = ([string](Invoke-Git $emptyRoot rev-parse HEAD | Select-Object -Last 1)).Trim()
-    Write-Manifest $emptyRoot '1.0.0'
-    $null = Invoke-Git $emptyRoot add -- 'plugins/context-window-manager/.codex-plugin/plugin.json'
-    $null = Invoke-Git $emptyRoot commit -m 'add manifest'
-    $withManifest = ([string](Invoke-Git $emptyRoot rev-parse HEAD | Select-Object -Last 1)).Trim()
-    $plan = Read-Plan $emptyRoot $withoutManifest $withManifest
-    Assert-True (-not [bool]$plan.changed) 'Adding the first manifest must establish a baseline, not publish automatically.'
-    Write-Output 'PASS first manifest establishes a no-release baseline'
-    $passed++
-
-    $setterRoot = Join-Path $tempRoot 'setter'
-    foreach ($path in @('scripts', 'plugins\context-window-manager\.codex-plugin', 'plugins\context-window-manager\mcp', 'plugins\context-window-manager\ui')) {
-        $null = New-Item -ItemType Directory -Path (Join-Path $setterRoot $path) -Force
-    }
-    Copy-Item -LiteralPath $setter -Destination (Join-Path $setterRoot 'scripts\set-version.ps1')
-    [System.IO.File]::WriteAllText((Join-Path $setterRoot 'plugins\context-window-manager\.codex-plugin\plugin.json'), "{`n  `"version`": `"1.0.0+codex.test`",`n  `"name`": `"context-window-manager`"`n}`n", $utf8)
-    [System.IO.File]::WriteAllText((Join-Path $setterRoot 'plugins\context-window-manager\mcp\server.mjs'), "const SERVER_VERSION = `"1.0.0`";`n", $utf8)
-    [System.IO.File]::WriteAllText((Join-Path $setterRoot 'plugins\context-window-manager\ui\context-window-control.html'), "appInfo: { name: `"context-window-manager-widget`", version: `"1.0.0`" }`n", $utf8)
-    & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $setterRoot 'scripts\set-version.ps1') 'v1.0.1' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'set-version.ps1 failed.' }
-    $updatedManifest = Get-Content -Raw (Join-Path $setterRoot 'plugins\context-window-manager\.codex-plugin\plugin.json') | ConvertFrom-Json
-    Assert-True ([string]$updatedManifest.version -ceq '1.0.1') 'Version helper did not update the manifest.'
-    Assert-True ([System.IO.File]::ReadAllText((Join-Path $setterRoot 'plugins\context-window-manager\mcp\server.mjs')).Contains('"1.0.1"')) 'Version helper did not update the MCP server.'
-    Assert-True ([System.IO.File]::ReadAllText((Join-Path $setterRoot 'plugins\context-window-manager\ui\context-window-control.html')).Contains('version: "1.0.1"')) 'Version helper did not update the widget.'
-    Write-Output 'PASS manual version helper updates all public version fields'
-    $passed++
-}
-finally {
-    if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
-}
-
+finally{ if(Test-Path -LiteralPath $temp){ Remove-Item -LiteralPath $temp -Recurse -Force } }
 Write-Output "RESULT passed=$passed failed=0"

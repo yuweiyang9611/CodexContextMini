@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ContextMini.Core/ContextMini.Core.csproj" />
+    <Project Path="src/ContextMini/ContextMini.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ContextMini.Tests/ContextMini.Tests.csproj" />
+  </Folder>
+</Solution>

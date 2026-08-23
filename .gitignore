@@ -8,6 +8,7 @@ __pycache__/
 *.pyc
 
 # Generated build and test output
+.artifacts/
 artifacts/
 bin/
 dist/
@@ -23,6 +24,7 @@ coverage/
 *.exe
 *.user
 *.suo
+*.zip
 
 # Local secrets
 .env
