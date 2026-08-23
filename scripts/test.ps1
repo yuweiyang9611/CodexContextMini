@@ -16,3 +16,7 @@ if (-not $NoBuild) {
 }
 & dotnet run --project (Join-Path $root 'tests\ContextMini.Tests\ContextMini.Tests.csproj') -c $Configuration --no-build
 if ($LASTEXITCODE -ne 0) { throw "Context Mini tests failed with exit code $LASTEXITCODE." }
+& dotnet run --project (Join-Path $root 'tests\ContextMini.WpfTests\ContextMini.WpfTests.csproj') -c $Configuration --no-build
+if ($LASTEXITCODE -ne 0) { throw "Context Mini WPF tests failed with exit code $LASTEXITCODE." }
+& (Join-Path $root 'tests\appearance-xaml.tests.ps1')
+if ($LASTEXITCODE -ne 0) { throw "Appearance XAML tests failed with exit code $LASTEXITCODE." }
