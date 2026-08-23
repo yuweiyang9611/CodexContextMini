@@ -10,108 +10,74 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) { $RepositoryRoot = Join-Path $PSScriptRoot '..' }
+$root = [IO.Path]::GetFullPath((Get-Item -LiteralPath $RepositoryRoot -Force).FullName)
+$semverPattern = '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?$'
 
-if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
-    $RepositoryRoot = Join-Path $PSScriptRoot '..'
+function Invoke-GitExpected {
+    param([string[]]$Arguments,[int[]]$Allowed=@(0))
+    $saved=$ErrorActionPreference
+    try{ $ErrorActionPreference='SilentlyContinue'; $output=@(& git -C $root @Arguments 2>$null); $code=$LASTEXITCODE }
+    finally{ $ErrorActionPreference=$saved }
+    if($Allowed -notcontains $code){ throw "Git command failed with exit code $code." }
+    return [PSCustomObject]@{Code=$code;Output=$output}
 }
-$root = [System.IO.Path]::GetFullPath((Get-Item -LiteralPath $RepositoryRoot -Force).FullName)
-$manifestRelativePath = 'plugins/context-window-manager/.codex-plugin/plugin.json'
-$semverPattern = '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$'
-
 function Resolve-Commit {
-    param([string]$Commit, [switch]$AllowMissing)
-    $savedPreference = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = 'SilentlyContinue'
-        $output = & git -C $root rev-parse --verify ($Commit + '^{commit}') 2>$null
-        $exitCode = $LASTEXITCODE
-    }
-    finally {
-        $ErrorActionPreference = $savedPreference
-    }
-    if ($exitCode -ne 0) {
-        if ($AllowMissing) { return $null }
-        throw "Unable to resolve commit: $Commit"
-    }
-    return ([string]($output | Select-Object -Last 1)).Trim()
+    param([string]$Commit,[switch]$AllowMissing)
+    $result=Invoke-GitExpected @('rev-parse','--verify',($Commit+'^{commit}')) $(if($AllowMissing){@(0,1,128)}else{@(0)})
+    if($result.Code -ne 0){ return $null }
+    return ([string]($result.Output|Select-Object -Last 1)).Trim()
 }
-
 function Read-VersionAtCommit {
-    param([string]$Commit, [switch]$AllowMissing)
-    $spec = $Commit + ':' + $manifestRelativePath
-    $savedPreference = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = 'SilentlyContinue'
-        $content = & git -C $root show $spec 2>$null
-        $exitCode = $LASTEXITCODE
-    }
-    finally {
-        $ErrorActionPreference = $savedPreference
-    }
-    if ($exitCode -ne 0) {
-        if ($AllowMissing) { return $null }
-        throw "Unable to read $manifestRelativePath from commit $Commit."
-    }
-
-    try {
-        $manifest = (($content -join [Environment]::NewLine) | ConvertFrom-Json)
-    }
-    catch {
-        throw "Invalid plugin manifest JSON at commit ${Commit}: $($_.Exception.Message)"
-    }
-    $fullVersion = [string]$manifest.version
-    if ($fullVersion -cnotmatch $semverPattern) {
-        throw "Manifest version at commit $Commit is not strict SemVer: $fullVersion"
-    }
-    return [PSCustomObject]@{
-        full = $fullVersion
-        release = ($fullVersion -split '\+', 2)[0]
-    }
+    param([string]$Commit,[switch]$AllowMissing)
+    $result=Invoke-GitExpected @('show',($Commit+':VERSION')) $(if($AllowMissing){@(0,1,128)}else{@(0)})
+    if($result.Code -ne 0){ return $null }
+    $version=(($result.Output -join [Environment]::NewLine).Trim())
+    if($version -cnotmatch $semverPattern){ throw "VERSION at commit $Commit is not release SemVer: $version" }
+    return $version
 }
 
-$currentSha = Resolve-Commit $CurrentCommit
-$currentVersion = Read-VersionAtCommit $currentSha
-$beforeValue = $BeforeCommit.Trim()
-$previousSha = $null
-$previousVersion = $null
-$changed = $false
-$reason = $null
+$currentSha=Resolve-Commit $CurrentCommit
+$currentVersion=Read-VersionAtCommit $currentSha
+$beforeValue=$BeforeCommit.Trim()
+$beforeSha=$null
+$eligible=$false
+$reason=$null
+$versionCommit=$null
+$previousVersion=$null
 
-if ([string]::IsNullOrWhiteSpace($beforeValue) -or $beforeValue -cmatch '^0{40}$') {
-    $reason = 'No previous commit was supplied; the current version is recorded as a baseline.'
+if([string]::IsNullOrWhiteSpace($beforeValue) -or $beforeValue -cmatch '^0+$'){
+    $reason='No previous commit was supplied; the current version is recorded as a baseline.'
 }
-else {
-    $previousSha = Resolve-Commit $beforeValue -AllowMissing
-    if ($null -eq $previousSha) {
-        $reason = 'The previous commit is unavailable; release is skipped because a version change cannot be proven.'
-    }
-    else {
-        $previousVersion = Read-VersionAtCommit $previousSha -AllowMissing
-        if ($null -eq $previousVersion) {
-            $reason = 'The previous commit has no plugin manifest; the current version is recorded as a baseline.'
-        }
-        else {
-            $changed = $previousVersion.release -cne $currentVersion.release
-            $reason = if ($changed) {
-                "Release version changed from $($previousVersion.release) to $($currentVersion.release)."
+else{
+    $beforeSha=Resolve-Commit $beforeValue -AllowMissing
+    if($null -eq $beforeSha){ $reason='The previous commit is unavailable; release is skipped because history cannot be proven.' }
+    else{
+        $history=Invoke-GitExpected @('rev-list',$currentSha,'--','VERSION')
+        foreach($candidate in @($history.Output | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ -cmatch '^[0-9a-f]{40,64}$' })){
+            $candidateVersion=Read-VersionAtCommit $candidate -AllowMissing
+            if($null -eq $candidateVersion){ continue }
+            if($null -eq $versionCommit){
+                if($candidateVersion -cne $currentVersion){ throw 'VERSION history does not match the checked-out value.' }
+                $versionCommit=$candidate
+                continue
             }
-            else {
-                "Release version remains $($currentVersion.release)."
-            }
+            if($candidateVersion -cne $currentVersion){ $previousVersion=$candidateVersion; break }
         }
+        if($null -eq $versionCommit){ throw 'Unable to identify the commit that introduced the current VERSION.' }
+        $eligible=$null -ne $previousVersion
+        $reason=if($eligible){ "Current version $currentVersion was introduced after $previousVersion and remains eligible until released." }else{ "Version $currentVersion is the repository baseline." }
     }
 }
 
-$result = [PSCustomObject]@{
-    changed = $changed
-    reason = $reason
-    previousCommit = $previousSha
-    previousManifestVersion = if ($null -eq $previousVersion) { $null } else { $previousVersion.full }
-    previousReleaseVersion = if ($null -eq $previousVersion) { $null } else { $previousVersion.release }
-    currentCommit = $currentSha
-    currentManifestVersion = $currentVersion.full
-    currentReleaseVersion = $currentVersion.release
-    tag = "v$($currentVersion.release)"
+$result=[PSCustomObject]@{
+    changed=$eligible
+    reason=$reason
+    previousCommit=$beforeSha
+    previousReleaseVersion=$previousVersion
+    versionCommit=$versionCommit
+    currentCommit=$currentSha
+    currentReleaseVersion=$currentVersion
+    tag="v$currentVersion"
 }
-
-if ($Json) { $result | ConvertTo-Json -Compress } else { $result }
+if($Json){ $result|ConvertTo-Json -Compress }else{ $result }
