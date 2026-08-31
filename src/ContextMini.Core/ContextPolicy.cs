@@ -4,6 +4,8 @@ public static class ContextPolicy
 {
     public const long MinimumWindowTokens = 8_192;
     public const long MaximumWindowTokens = 1_050_000;
+    public const string TotalScope = "total";
+    public const string BodyAfterPrefixScope = "body_after_prefix";
 
     public static ContextPlan Auto { get; } = new(ContextProfile.Auto, null, null);
     public static ContextPlan Compact128K { get; } = new(ContextProfile.Compact128K, 128_000, 96_000);
@@ -23,15 +25,15 @@ public static class ContextPolicy
     public static ContextPlan Resolve(long windowTokens, long compactAtTokens, string scope)
     {
         Validate(windowTokens, compactAtTokens, scope);
-        if (windowTokens == Compact128K.WindowTokens && compactAtTokens == Compact128K.CompactAtTokens)
+        if (scope == TotalScope && windowTokens == Compact128K.WindowTokens && compactAtTokens == Compact128K.CompactAtTokens)
         {
             return Compact128K;
         }
-        if (windowTokens == Balanced400K.WindowTokens && compactAtTokens == Balanced400K.CompactAtTokens)
+        if (scope == TotalScope && windowTokens == Balanced400K.WindowTokens && compactAtTokens == Balanced400K.CompactAtTokens)
         {
             return Balanced400K;
         }
-        if (windowTokens == OneMillion.WindowTokens && compactAtTokens == OneMillion.CompactAtTokens)
+        if (scope == TotalScope && windowTokens == OneMillion.WindowTokens && compactAtTokens == OneMillion.CompactAtTokens)
         {
             return OneMillion;
         }
@@ -63,9 +65,10 @@ public static class ContextPolicy
         {
             throw new ArgumentOutOfRangeException(nameof(compactAtTokens), "Compaction must be positive and below the window.");
         }
-        if (!string.Equals(scope, "total", StringComparison.Ordinal))
+        if (!string.Equals(scope, TotalScope, StringComparison.Ordinal) &&
+            !string.Equals(scope, BodyAfterPrefixScope, StringComparison.Ordinal))
         {
-            throw new ArgumentException("Context Mini supports only total compaction scope.", nameof(scope));
+            throw new ArgumentException("Compaction scope must be total or body_after_prefix.", nameof(scope));
         }
     }
 

@@ -83,7 +83,13 @@ public sealed class AppearanceSettingsStore
         try
         {
             if (!File.Exists(SettingsPath)) return AppearancePreference.System;
-            using var stream = new FileStream(SettingsPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            // Replacement is the save primitive. Grant delete sharing so a just-finished
+            // or concurrent read cannot make the atomic rename fail on Windows.
+            using var stream = new FileStream(
+                SettingsPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read | FileShare.Delete);
             if (stream.Length > MaximumSettingsBytes) return AppearancePreference.System;
 
             var bytes = new byte[MaximumSettingsBytes + 1];
@@ -112,21 +118,51 @@ public sealed class AppearanceSettingsStore
             ?? throw new InvalidOperationException("The appearance settings path has no parent directory.");
         Directory.CreateDirectory(directory);
 
-        var temporaryPath = Path.Combine(directory, $".{Path.GetFileName(SettingsPath)}.{Guid.NewGuid():N}.tmp");
+        var token = Guid.NewGuid().ToString("N");
+        var temporaryPath = Path.Combine(directory, $".{Path.GetFileName(SettingsPath)}.{token}.tmp");
+        var backupPath = Path.Combine(directory, $".{Path.GetFileName(SettingsPath)}.{token}.bak");
+        var committed = false;
         try
         {
             File.WriteAllText(temporaryPath, payload, Utf8Strict);
-            File.Move(temporaryPath, SettingsPath, true);
+            if (File.Exists(SettingsPath))
+            {
+                File.Replace(temporaryPath, SettingsPath, backupPath, ignoreMetadataErrors: false);
+            }
+            else
+            {
+                File.Move(temporaryPath, SettingsPath);
+            }
+            committed = true;
         }
         finally
         {
+            DeleteBestEffort(temporaryPath);
+            if (committed)
+            {
+                DeleteBestEffort(backupPath);
+            }
+        }
+    }
+
+    private static void DeleteBestEffort(string path)
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
             try
             {
-                if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+                if (!File.Exists(path)) return;
+                File.Delete(path);
+                return;
             }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SecurityException)
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException or SecurityException)
             {
-                // A failed preference save must not hide the original error.
+                // Antivirus and indexers can hold a just-renamed file briefly. Cleanup is
+                // secondary to the already-determined save outcome, so retry without
+                // replacing the original exception or reporting a committed save as failed.
+                if (attempt == 4) return;
+                Thread.Sleep(20);
             }
         }
     }

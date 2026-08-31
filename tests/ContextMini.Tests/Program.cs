@@ -23,6 +23,7 @@ internal static class Program
         Run("near-limit output is rejected before writing", NearLimitOutputRejected);
         Run("malformed markers are never overwritten", MalformedMarkersRejected);
         Run("legacy plugin blocks migrate to Mini", LegacyBlockMigrates);
+        Run("legacy body-after-prefix scope survives migration", LegacyBodyScopeSurvivesMigration);
         Run("stale snapshots reject external writes", StaleSnapshotRejected);
         Run("UTF-8 BOM and CRLF survive apply/reset", BomAndCrlfPreserved);
         Run("BOM-only Auto is a byte-for-byte no-op", BomOnlyAutoNoOp);
@@ -30,9 +31,14 @@ internal static class Program
         Run("out-of-range legacy blocks can be removed", OutOfRangeLegacyCanBeRemoved);
         Run("an active project lock rejects concurrent apply", ActiveLockRejected);
         Run("oversized configs are rejected", OversizedConfigRejected);
+        Run("config reads stop at the bounded limit", ConfigReadStopsAtBoundedLimit);
         Run("invalid UTF-8 is rejected", InvalidUtf8Rejected);
         Run("unsafe .codex/config path shapes are rejected", UnsafePathShapesRejected);
         Run("filesystem roots are rejected as projects", FilesystemRootRejected);
+        Run("mapped network drives are rejected", MappedNetworkDriveRejected);
+        Run("filesystem identity rejects reparse points and type changes", FileSystemIdentityAttributesRejected);
+        Run("same-byte config replacement is detected", SameByteReplacementDetected);
+        Run("missing config rejects a replaced .codex directory", MissingConfigDirectoryReplacementDetected);
         Run("unexpected legacy content is rejected", UnexpectedLegacyContentRejected);
         Run("reapplying the same plan is idempotent", ReapplyIsIdempotent);
         Run("atomic writes leave no temporary artifacts", AtomicWriteLeavesNoArtifacts);
@@ -95,6 +101,16 @@ internal static class Program
                 Equal(AppearancePreferenceCodec.Format(preference) + Environment.NewLine, File.ReadAllText(path));
             }
 
+            using (var reader = new FileStream(
+                       path,
+                       FileMode.Open,
+                       FileAccess.Read,
+                       FileShare.Read | FileShare.Delete))
+            {
+                store.Save(AppearancePreference.Light);
+                Equal(AppearancePreference.Light, store.Load());
+            }
+
             File.WriteAllText(path, "sepia\n", Utf8NoBom);
             Equal(AppearancePreference.System, store.Load());
             File.WriteAllBytes(path, [0xFF, 0xFE]);
@@ -110,6 +126,7 @@ internal static class Program
             store.Save(AppearancePreference.Dark);
             Equal(AppearancePreference.Dark, store.Load());
             False(Directory.EnumerateFiles(Path.GetDirectoryName(path)!, "*.tmp").Any());
+            False(Directory.EnumerateFiles(Path.GetDirectoryName(path)!, "*.bak").Any());
         });
     }
 
@@ -239,6 +256,34 @@ internal static class Program
         });
     }
 
+    private static void LegacyBodyScopeSurvivesMigration()
+    {
+        WithProject(root =>
+        {
+            var legacy = string.Join("\n", ManagedConfigEditor.LegacyBeginMarker,
+                "model_context_window = 400000", "model_auto_compact_token_limit = 320000",
+                "model_auto_compact_token_limit_scope = \"body_after_prefix\"",
+                ManagedConfigEditor.LegacyEndMarker, string.Empty);
+            WriteConfig(root, Utf8NoBom.GetBytes(legacy));
+            var store = new ProjectConfigStore();
+            var snapshot = store.Load(root);
+            Equal(ContextPolicy.BodyAfterPrefixScope, snapshot.Document.Scope);
+            var preserved = ContextPolicy.Resolve(
+                snapshot.Document.WindowTokens!.Value,
+                snapshot.Document.CompactAtTokens!.Value,
+                snapshot.Document.Scope!);
+            Equal(ContextProfile.Custom, preserved.Profile);
+            Equal(ContextPolicy.BodyAfterPrefixScope, preserved.Scope);
+            store.Apply(snapshot, preserved);
+            var migrated = store.Load(root);
+            Equal(ManagedBlockKind.MiniV1, migrated.Document.BlockKind);
+            Equal(ContextPolicy.BodyAfterPrefixScope, migrated.Document.Scope);
+            True(ReadText(root).Contains(
+                "model_auto_compact_token_limit_scope = \"body_after_prefix\"", StringComparison.Ordinal));
+            Equal(ContextPolicy.TotalScope, ContextPolicy.Balanced400K.Scope);
+        });
+    }
+
     private static void StaleSnapshotRejected()
     {
         WithProject(root =>
@@ -361,6 +406,18 @@ internal static class Program
         });
     }
 
+    private static void ConfigReadStopsAtBoundedLimit()
+    {
+        WithProject(root =>
+        {
+            WriteConfig(root, Utf8NoBom.GetBytes("# exists\n"));
+            var stream = new OversizedNonSeekableStream(ProjectConfigStore.MaximumConfigBytes + 128);
+            var store = new ProjectConfigStore(null, _ => stream);
+            Throws<UnsafeProjectException>(() => store.Load(root));
+            Equal(ProjectConfigStore.MaximumConfigBytes + 1, stream.BytesRead);
+        });
+    }
+
     private static void InvalidUtf8Rejected()
     {
         WithProject(root =>
@@ -385,6 +442,77 @@ internal static class Program
     }
     private static void FilesystemRootRejected() =>
         Throws<UnsafeProjectException>(() => WorkspaceValidator.Normalize(Path.GetPathRoot(Path.GetTempPath())!));
+
+    private static void MappedNetworkDriveRejected()
+    {
+        WithProject(root => Throws<UnsafeProjectException>(() =>
+            WorkspaceValidator.Normalize(root, _ => DriveType.Network)));
+    }
+
+    private static void FileSystemIdentityAttributesRejected()
+    {
+        FileSystemIdentity.ValidateHandleAttributes(FileAttributes.Directory, directory: true, "directory");
+        FileSystemIdentity.ValidateHandleAttributes(FileAttributes.Archive, directory: false, "file");
+        Throws<IOException>(() => FileSystemIdentity.ValidateHandleAttributes(
+            FileAttributes.Directory | FileAttributes.ReparsePoint,
+            directory: true,
+            "directory-link"));
+        Throws<IOException>(() => FileSystemIdentity.ValidateHandleAttributes(
+            FileAttributes.Archive,
+            directory: true,
+            "file-instead-of-directory"));
+        Throws<IOException>(() => FileSystemIdentity.ValidateHandleAttributes(
+            FileAttributes.Directory,
+            directory: false,
+            "directory-instead-of-file"));
+    }
+
+    private static void SameByteReplacementDetected()
+    {
+        WithProject(root =>
+        {
+            const string original = "# same bytes\n";
+            WriteConfig(root, Utf8NoBom.GetBytes(original));
+            var displacedPath = ConfigPath(root) + ".displaced";
+            var store = new ProjectConfigStore(path =>
+            {
+                File.Move(path, displacedPath);
+                File.WriteAllBytes(path, Utf8NoBom.GetBytes(original));
+            });
+            var snapshot = store.Load(root);
+            Throws<ConfigConflictException>(() => store.Apply(snapshot, ContextPolicy.Balanced400K));
+            Equal(original, ReadText(root));
+            True(File.Exists(displacedPath));
+        });
+    }
+
+    private static void MissingConfigDirectoryReplacementDetected()
+    {
+        WithProject(root =>
+        {
+            var codexDirectory = Directory.CreateDirectory(Path.Combine(root, ".codex")).FullName;
+            var replacementDirectory = Directory.CreateDirectory(Path.Combine(root, ".codex-replacement")).FullName;
+            var replacementVisible = false;
+            var store = new ProjectConfigStore(
+                _ => replacementVisible = true,
+                null,
+                (path, directory) =>
+                {
+                    if (replacementVisible && directory &&
+                        string.Equals(path, codexDirectory, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return FileSystemIdentity.Read(replacementDirectory, directory: true);
+                    }
+                    return FileSystemIdentity.Read(path, directory);
+                });
+            var snapshot = store.Load(root);
+
+            Throws<ConfigConflictException>(() => store.Apply(snapshot, ContextPolicy.Balanced400K));
+            False(File.Exists(ConfigPath(root)));
+            False(File.Exists(Path.Combine(replacementDirectory, "config.toml")));
+            True(replacementVisible);
+        });
+    }
 
     private static void UnexpectedLegacyContentRejected()
     {
@@ -454,5 +582,32 @@ internal static class Program
         try { action(); }
         catch (TException) { return; }
         throw new InvalidOperationException($"Expected {typeof(TException).Name}.");
+    }
+
+    private sealed class OversizedNonSeekableStream(long bytesAvailable) : Stream
+    {
+        private long _remaining = bytesAvailable;
+        public long BytesRead { get; private set; }
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var read = (int)Math.Min(_remaining, count);
+            Array.Fill(buffer, (byte)'x', offset, read);
+            _remaining -= read;
+            BytesRead += read;
+            return read;
+        }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }

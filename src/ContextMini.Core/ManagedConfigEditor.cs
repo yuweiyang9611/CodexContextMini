@@ -72,7 +72,7 @@ public sealed class ManagedConfigEditor
             MiniBeginMarker,
             $"model_context_window = {window}",
             $"model_auto_compact_token_limit = {compact}",
-            "model_auto_compact_token_limit_scope = \"total\"",
+            $"model_auto_compact_token_limit_scope = \"{plan.Scope}\"",
             MiniEndMarker,
         };
         return string.Join(document.NewLine, lines) + document.NewLine + document.SuffixText;
@@ -93,13 +93,13 @@ public sealed class ManagedConfigEditor
             !TryAssignment(lines[1], "model_context_window", out var windowText) ||
             !TryAssignment(lines[2], "model_auto_compact_token_limit", out var compactText) ||
             !TryAssignment(lines[3], "model_auto_compact_token_limit_scope", out var scopeText) ||
-            scopeText != "\"total\"" ||
+            !TryParseScope(scopeText, out var scope) ||
             !long.TryParse(windowText, NumberStyles.None, CultureInfo.InvariantCulture, out var window) ||
             !long.TryParse(compactText, NumberStyles.None, CultureInfo.InvariantCulture, out var compact))
         {
             return Invalid(text, newLine, "The Mini block contains unexpected content.");
         }
-        return FinishParsed(text, suffix, newLine, ManagedBlockKind.MiniV1, window, compact);
+        return FinishParsed(text, suffix, newLine, ManagedBlockKind.MiniV1, window, compact, scope);
     }
 
     private static ManagedDocument ParseLegacy(string text, string newLine)
@@ -144,11 +144,11 @@ public sealed class ManagedConfigEditor
                 return Invalid(text, newLine, "The legacy managed block contains unexpected content.");
             }
         }
-        if (window is null || compact is null || (scope != "\"total\"" && scope != "\"body_after_prefix\""))
+        if (window is null || compact is null || !TryParseScope(scope, out var parsedScope))
         {
             return Invalid(text, newLine, "The legacy managed block is incomplete.");
         }
-        return FinishParsed(text, suffix, newLine, ManagedBlockKind.LegacyPlugin, window.Value, compact.Value);
+        return FinishParsed(text, suffix, newLine, ManagedBlockKind.LegacyPlugin, window.Value, compact.Value, parsedScope);
     }
 
     private static ManagedDocument FinishParsed(
@@ -157,7 +157,8 @@ public sealed class ManagedConfigEditor
         string newLine,
         ManagedBlockKind kind,
         long window,
-        long compact)
+        long compact,
+        string scope)
     {
         if (kind == ManagedBlockKind.LegacyPlugin)
         {
@@ -170,7 +171,7 @@ public sealed class ManagedConfigEditor
         {
             try
             {
-                ContextPolicy.Validate(window, compact, "total");
+                ContextPolicy.Validate(window, compact, scope);
             }
             catch (ArgumentException exception)
             {
@@ -179,9 +180,17 @@ public sealed class ManagedConfigEditor
         }
         var conflict = FindConflict(suffix);
         return conflict is null
-            ? new ManagedDocument(text, suffix, newLine, kind, window, compact, "total", true,
-                kind == ManagedBlockKind.LegacyPlugin ? "A legacy plugin block will migrate to Context Mini when applied." : null)
+            ? new ManagedDocument(text, suffix, newLine, kind, window, compact, scope, true,
+                kind == ManagedBlockKind.LegacyPlugin ? "A legacy plugin block will migrate to Context Mini while preserving its compaction scope when applied." : null)
             : Invalid(text, newLine, $"A managed context key exists outside the managed block: {conflict}");
+    }
+
+    private static bool TryParseScope(string? text, out string scope)
+    {
+        if (text == $"\"{ContextPolicy.TotalScope}\"") { scope = ContextPolicy.TotalScope; return true; }
+        if (text == $"\"{ContextPolicy.BodyAfterPrefixScope}\"") { scope = ContextPolicy.BodyAfterPrefixScope; return true; }
+        scope = string.Empty;
+        return false;
     }
 
     private static bool TryExtract(string text, string endMarker, out string block, out string suffix)

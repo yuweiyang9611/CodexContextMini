@@ -25,6 +25,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Validate GitHub Actions workflows
+        shell: powershell
+        run: .\scripts\validate-github-actions.ps1 -RepositoryRoot $env:GITHUB_WORKSPACE
+
       - name: Set up Node.js 24
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -52,18 +56,30 @@ jobs:
         shell: powershell
         run: powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\test.ps1 -Configuration Release -NoBuild
 
-      - name: Test release version gate
+      - name: Test release automation
         shell: powershell
         run: powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\tests\release-automation.tests.ps1
 
-      - name: Smoke-test WPF release archive
+      - name: Build and inspect tested release assets
         shell: powershell
         run: >-
           powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass
           -File .\scripts\build-release.ps1
           -Commitish $env:GITHUB_SHA
-          -OutputDirectory (Join-Path $env:RUNNER_TEMP 'release-smoke')
+          -OutputDirectory (Join-Path $env:RUNNER_TEMP 'release-assets')
           -Json
+
+      - name: Upload tested release assets
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: context-mini-release-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/release-assets/ContextMini-*.zip
+            ${{ runner.temp }}/release-assets/SHA256SUMS.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
 
   release:
     name: Release a new Context Mini version
@@ -72,9 +88,11 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     permissions:
+      actions: read
       contents: write
     concurrency:
-      group: release-${{ github.sha }}
+      group: release-${{ github.repository }}-main
+      queue: max
       cancel-in-progress: false
     steps:
       - name: Check out the tested commit
@@ -84,108 +102,115 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up .NET 10
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          global-json-file: global.json
-
       - name: Resolve version gate
         id: version
-        shell: pwsh
+        shell: powershell
         env:
           BEFORE_SHA: ${{ github.event.before }}
           SOURCE_SHA: ${{ github.sha }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if (Test-Path variable:PSNativeCommandUseErrorActionPreference) {
-            $PSNativeCommandUseErrorActionPreference = $false
-          }
-          $actualSha = (& git rev-parse HEAD).Trim()
-          if ($actualSha -cne $env:SOURCE_SHA) { throw "Checked out $actualSha instead of $env:SOURCE_SHA." }
-          $planJson = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
-            -File .\scripts\resolve-version-change.ps1 `
-            -BeforeCommit $env:BEFORE_SHA `
-            -CurrentCommit $env:SOURCE_SHA `
-            -Json
-          if ($LASTEXITCODE -ne 0) { throw "Version comparison failed with exit code $LASTEXITCODE." }
-          $plan = (($planJson -join [Environment]::NewLine) | ConvertFrom-Json)
-          $version = [string]$plan.currentReleaseVersion
-          $tag = [string]$plan.tag
-          & git check-ref-format "refs/tags/$tag"
-          if ($LASTEXITCODE -ne 0) { throw "Invalid release tag: $tag" }
-          "release_version=$version" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "tag=$tag" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "changed=$(([bool]$plan.changed).ToString().ToLowerInvariant())" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          Write-Host ([string]$plan.reason)
+        run: >-
+          powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass
+          -File .\scripts\resolve-ci-release.ps1
+          -BeforeCommit $env:BEFORE_SHA
+          -SourceSha $env:SOURCE_SHA
+          -GitHubOutput $env:GITHUB_OUTPUT
 
       - name: Check tag and Release state
         id: release_state
         if: steps.version.outputs.changed == 'true'
-        shell: pwsh
+        shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
           RELEASE_VERSION: ${{ steps.version.outputs.release_version }}
           SOURCE_SHA: ${{ github.sha }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if (Test-Path variable:PSNativeCommandUseErrorActionPreference) { $PSNativeCommandUseErrorActionPreference = $false }
-          $tagRef = "refs/tags/$env:RELEASE_TAG"
-          $tagRows = @(& git ls-remote --tags origin $tagRef ($tagRef + '^{}'))
-          if ($LASTEXITCODE -ne 0) { throw "Unable to inspect $env:RELEASE_TAG." }
-          $tagCommit = $null
-          foreach ($row in $tagRows) {
-            if ([string]::IsNullOrWhiteSpace([string]$row)) { continue }
-            $parts = ([string]$row) -split '\s+', 2
-            if ($parts.Count -ne 2) { throw 'Unexpected ls-remote output.' }
-            if ($parts[1] -ceq ($tagRef + '^{}')) { $tagCommit = $parts[0] }
-            elseif ($null -eq $tagCommit -and $parts[1] -ceq $tagRef) { $tagCommit = $parts[0] }
-          }
-          $releaseJson = & gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json isDraft,assets,url 2>$null
-          if ($LASTEXITCODE -eq 0) {
-            $release = $releaseJson | ConvertFrom-Json
-            if ($null -eq $tagCommit) { throw 'Existing release has no matching tag.' }
-            & git merge-base --is-ancestor $tagCommit $env:SOURCE_SHA
-            if ($LASTEXITCODE -ne 0) { throw 'Existing release tag is not an ancestor of the tested commit.' }
-            if ([bool]$release.isDraft) { throw 'A draft release already exists; inspect it before retrying.' }
-            $expected = @("ContextMini-v$env:RELEASE_VERSION-win-x64.zip", 'SHA256SUMS.txt')
-            $actual = @($release.assets | ForEach-Object { [string]$_.name })
-            $missing = @($expected | Where-Object { $actual -cnotcontains $_ })
-            if ($missing.Count -gt 0) { throw "Published release is missing: $($missing -join ', ')" }
-            "publish=false" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
-            exit 0
-          }
-          if ($null -ne $tagCommit -and $tagCommit -cne $env:SOURCE_SHA) { throw 'The release tag already points to another commit.' }
-          "publish=true" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
-
-      - name: Build WPF release archive
-        if: steps.release_state.outputs.publish == 'true'
-        shell: powershell
         run: >-
           powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass
-          -File .\scripts\build-release.ps1
-          -Commitish $env:GITHUB_SHA
-          -OutputDirectory (Join-Path $env:RUNNER_TEMP 'release')
-          -Json
+          -File .\scripts\get-release-state.ps1
+          -Repository $env:GITHUB_REPOSITORY
+          -Tag $env:RELEASE_TAG
+          -Version $env:RELEASE_VERSION
+          -SourceSha $env:SOURCE_SHA
+          -GitHubOutput $env:GITHUB_OUTPUT
+
+      - name: Download tested release assets
+        if: steps.version.outputs.changed == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: context-mini-release-${{ github.sha }}
+          path: ${{ runner.temp }}/release
+
+      - name: Verify tested release assets
+        if: steps.version.outputs.changed == 'true'
+        shell: powershell
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.release_version }}
+        run: >-
+          powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass
+          -File .\scripts\verify-release-assets.ps1
+          -AssetDirectory (Join-Path $env:RUNNER_TEMP 'release')
+          -Version $env:RELEASE_VERSION
 
       - name: Publish GitHub Release
         if: steps.release_state.outputs.publish == 'true'
-        shell: pwsh
+        shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
           RELEASE_VERSION: ${{ steps.version.outputs.release_version }}
           SOURCE_SHA: ${{ github.sha }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $assets = @(Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP 'release') -File | Sort-Object Name | ForEach-Object FullName)
-          if ($assets.Count -ne 2) { throw "Expected two release assets, found $($assets.Count)." }
-          $arguments = @('release','create',$env:RELEASE_TAG) + $assets + @(
-            '--repo',$env:GITHUB_REPOSITORY,
-            '--target',$env:SOURCE_SHA,
-            '--title',"Context Mini $env:RELEASE_VERSION",
-            '--generate-notes'
-          )
-          if ($env:RELEASE_VERSION.Contains('-')) { $arguments += '--prerelease' }
-          & gh @arguments
-          if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE." }
+        run: >-
+          powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass
+          -File .\scripts\publish-github-release.ps1
+          -Mode Create
+          -Repository $env:GITHUB_REPOSITORY
+          -Tag $env:RELEASE_TAG
+          -Version $env:RELEASE_VERSION
+          -SourceSha $env:SOURCE_SHA
+          -AssetDirectory (Join-Path $env:RUNNER_TEMP 'release')
+
+      - name: Recover matching draft Release
+        if: steps.release_state.outputs.recover == 'true'
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.release_version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: >-
+          powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass
+          -File .\scripts\publish-github-release.ps1
+          -Mode Recover
+          -Repository $env:GITHUB_REPOSITORY
+          -Tag $env:RELEASE_TAG
+          -Version $env:RELEASE_VERSION
+          -SourceSha $env:SOURCE_SHA
+          -AssetDirectory (Join-Path $env:RUNNER_TEMP 'release')
+
+      - name: Verify published GitHub Release assets
+        if: steps.version.outputs.changed == 'true'
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.release_version }}
+          COMPARE_TESTED: ${{ steps.release_state.outputs.compare_tested }}
+        run: >-
+          powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass
+          -File .\scripts\verify-github-release.ps1
+          -Repository $env:GITHUB_REPOSITORY
+          -Tag $env:RELEASE_TAG
+          -Version $env:RELEASE_VERSION
+          -DownloadDirectory (Join-Path $env:RUNNER_TEMP ("verify-" + $env:RELEASE_TAG))
+          -TrustedDirectory (Join-Path $env:RUNNER_TEMP 'release')
+          -CompareTested $env:COMPARE_TESTED
+
+      - name: Ensure the highest stable version is Latest
+        if: steps.version.outputs.changed == 'true'
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass
+          -File .\scripts\set-latest-github-release.ps1
+          -Repository $env:GITHUB_REPOSITORY

@@ -4,7 +4,7 @@
         xmlns:core="clr-namespace:ContextMini.Core;assembly=ContextMini.Core"
         Title="Context Mini"
         Width="760"
-        Height="660"
+        Height="760"
         MinWidth="680"
         MinHeight="600"
         WindowStartupLocation="CenterScreen"
@@ -68,6 +68,22 @@
         <Style x:Key="PresetButton" TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
             <Setter Property="Margin" Value="0,0,10,0" />
             <Setter Property="MinWidth" Value="108" />
+        </Style>
+        <Style x:Key="NumericInput" TargetType="TextBox">
+            <Setter Property="Padding" Value="10,7" />
+            <Setter Property="MinHeight" Value="36" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="Background" Value="{DynamicResource ControlBackgroundBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource ControlTextBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Style.Triggers>
+                <Trigger Property="IsKeyboardFocused" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource FocusBorderBrush}" />
+                    <Setter Property="BorderThickness" Value="2" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
         <Style x:Key="AppearanceChoice" TargetType="RadioButton">
             <Setter Property="MinHeight" Value="32" />
@@ -191,8 +207,37 @@
                                        TextTrimming="CharacterEllipsis"
                                        ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
                             <TextBlock x:Name="ProjectPathText" Margin="0,3,16,0" Foreground="{DynamicResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock x:Name="TrustStatusText"
+                                       Margin="0,8,16,0"
+                                       Foreground="{DynamicResource TertiaryTextBrush}"
+                                       TextWrapping="Wrap" />
+                            <Grid Margin="0,12,16,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="最近项目" Margin="0,0,10,0" VerticalAlignment="Center" Foreground="{DynamicResource SecondaryTextBrush}" />
+                                <ComboBox x:Name="RecentProjectsCombo"
+                                          Grid.Column="1"
+                                          MinWidth="260"
+                                          MaxWidth="440"
+                                          HorizontalAlignment="Stretch"
+                                          VerticalContentAlignment="Center"
+                                          AutomationProperties.Name="最近项目" />
+                                <Button Grid.Column="2"
+                                        Content="打开"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Margin="8,0,0,0"
+                                        Padding="12,6"
+                                        Click="OpenRecentProject_Click" />
+                            </Grid>
                         </StackPanel>
-                        <Button Grid.Column="1" Content="切换…" Style="{StaticResource SecondaryButton}" Click="SwitchProject_Click" VerticalAlignment="Center" />
+                        <Button Grid.Column="1"
+                                Content="选择项目…"
+                                Style="{StaticResource SecondaryButton}"
+                                Click="SwitchProject_Click"
+                                VerticalAlignment="Top" />
                     </Grid>
                 </Border>
 
@@ -222,6 +267,7 @@
                                     Maximum="1050000"
                                     TickFrequency="1000"
                                     IsSnapToTickEnabled="False"
+                                    AutomationProperties.Name="上下文请求值滑块"
                                     ValueChanged="WindowSlider_ValueChanged" />
                             <TextBlock Grid.Column="2" Text="1,050,000" Foreground="{DynamicResource TertiaryTextBrush}" VerticalAlignment="Center" />
                         </Grid>
@@ -234,16 +280,39 @@
                             <Border Background="{DynamicResource AlternateSurfaceBrush}" CornerRadius="8" Padding="14" Margin="0,0,8,0">
                                 <StackPanel>
                                     <TextBlock Text="上下文请求值" Foreground="{DynamicResource SecondaryTextBrush}" />
-                                    <TextBlock x:Name="WindowValueText" Margin="0,4,0,0" FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource AccentTextBrush}" />
+                                    <TextBox x:Name="WindowInputTextBox"
+                                             Margin="0,7,0,0"
+                                             Style="{StaticResource NumericInput}"
+                                             AutomationProperties.Name="上下文请求精确值"
+                                             TextChanged="ExactValue_TextChanged" />
+                                    <TextBlock x:Name="WindowValueText"
+                                               Margin="0,6,0,0"
+                                               Foreground="{DynamicResource AccentTextBrush}" />
                                 </StackPanel>
                             </Border>
                             <Border Grid.Column="1" Background="{DynamicResource AlternateSurfaceBrush}" CornerRadius="8" Padding="14" Margin="8,0,0,0">
                                 <StackPanel>
                                     <TextBlock Text="自动压缩阈值" Foreground="{DynamicResource SecondaryTextBrush}" />
-                                    <TextBlock x:Name="CompactValueText" Margin="0,4,0,0" FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource AccentTextBrush}" />
+                                    <TextBox x:Name="CompactInputTextBox"
+                                             Margin="0,7,0,0"
+                                             Style="{StaticResource NumericInput}"
+                                             AutomationProperties.Name="自动压缩阈值精确值"
+                                             TextChanged="ExactValue_TextChanged" />
+                                    <TextBlock x:Name="CompactValueText"
+                                               Margin="0,6,0,0"
+                                               Foreground="{DynamicResource AccentTextBrush}" />
                                 </StackPanel>
                             </Border>
                         </Grid>
+                        <TextBlock x:Name="ScopeValueText"
+                                   Margin="0,10,0,0"
+                                   Foreground="{DynamicResource TertiaryTextBrush}" />
+                        <TextBlock x:Name="InputErrorText"
+                                   Margin="0,8,0,0"
+                                   Foreground="{DynamicResource WarningTextBrush}"
+                                   TextWrapping="Wrap"
+                                   AutomationProperties.LiveSetting="Polite"
+                                   Visibility="Collapsed" />
 
                         <Border x:Name="WarningBorder"
                                 Margin="0,16,0,0"
@@ -257,11 +326,67 @@
                     </StackPanel>
                 </Border>
 
+                <Border x:Name="ConflictBorder"
+                        Style="{StaticResource CardStyle}"
+                        Background="{DynamicResource WarningBackgroundBrush}"
+                        BorderBrush="{DynamicResource WarningBorderBrush}"
+                        Visibility="Collapsed">
+                    <StackPanel>
+                        <TextBlock x:Name="ConflictTitleText"
+                                   Text="检测到外部修改"
+                                   FontSize="16"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource WarningTextBrush}" />
+                        <TextBlock x:Name="ConflictText"
+                                   Margin="0,6,0,12"
+                                   Text="你的草稿仍保留。请选择以最新磁盘配置为新基线，或明确丢弃草稿。"
+                                   Foreground="{DynamicResource WarningTextBrush}"
+                                   AutomationProperties.LiveSetting="Polite"
+                                   TextWrapping="Wrap" />
+                        <WrapPanel>
+                            <Button x:Name="RebaseDraftButton"
+                                    Content="保留草稿并基于新配置"
+                                    Style="{StaticResource PrimaryButton}"
+                                    Margin="0,0,10,8"
+                                    Click="RebaseDraft_Click" />
+                            <Button x:Name="ViewExternalChangesButton"
+                                    Content="查看变化"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Margin="0,0,10,8"
+                                    Click="ViewExternalChanges_Click" />
+                            <Button x:Name="DiscardDraftButton"
+                                    Content="丢弃草稿并重载"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Margin="0,0,10,8"
+                                    Click="DiscardDraft_Click" />
+                            <Button x:Name="ReloadConflictButton"
+                                    Content="重新读取磁盘"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Margin="0,0,0,8"
+                                    Click="Reload_Click" />
+                        </WrapPanel>
+                    </StackPanel>
+                </Border>
+
                 <Border Style="{StaticResource CardStyle}" Margin="0">
                     <StackPanel>
                         <TextBlock Text="磁盘状态" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource SecondaryTextBrush}" />
                         <TextBlock x:Name="DiskStatusText" Margin="0,5,0,0" FontSize="16" Foreground="{DynamicResource PrimaryTextBrush}" TextWrapping="Wrap" />
-                        <TextBlock x:Name="StatusText" Margin="0,6,0,0" Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                        <TextBlock x:Name="StatusText"
+                                   Margin="0,6,0,0"
+                                   Foreground="{DynamicResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap"
+                                   AutomationProperties.LiveSetting="Polite" />
+                        <WrapPanel Margin="0,12,0,0">
+                            <Button x:Name="OpenConfigButton"
+                                    Content="打开 config.toml"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Margin="0,0,10,0"
+                                    Click="OpenConfig_Click" />
+                            <Button Content="复制诊断信息"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Click="CopyDiagnostics_Click" />
+                        </WrapPanel>
                     </StackPanel>
                 </Border>
             </StackPanel>

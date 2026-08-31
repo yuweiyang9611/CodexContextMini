@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -12,14 +13,31 @@ public sealed class ProjectConfigStore
     private static readonly UTF8Encoding Utf8NoBom = new(false);
     private readonly ManagedConfigEditor _editor = new();
     private readonly Action<string>? _beforeAtomicMutation;
+    private readonly Func<string, Stream>? _openRead;
+    private readonly Func<string, bool, FileSystemIdentity> _readIdentity;
 
-    public ProjectConfigStore()
+    public ProjectConfigStore() : this(null, null, null)
     {
     }
 
     internal ProjectConfigStore(Action<string> beforeAtomicMutation)
+        : this(beforeAtomicMutation, null, null)
+    {
+    }
+
+    internal ProjectConfigStore(Action<string>? beforeAtomicMutation, Func<string, Stream>? openRead)
+        : this(beforeAtomicMutation, openRead, null)
+    {
+    }
+
+    internal ProjectConfigStore(
+        Action<string>? beforeAtomicMutation,
+        Func<string, Stream>? openRead,
+        Func<string, bool, FileSystemIdentity>? readIdentity)
     {
         _beforeAtomicMutation = beforeAtomicMutation;
+        _openRead = openRead;
+        _readIdentity = readIdentity ?? FileSystemIdentity.Read;
     }
 
     public ConfigSnapshot Load(string projectRoot)
@@ -39,12 +57,7 @@ public sealed class ProjectConfigStore
             return new ConfigSnapshot(root, configPath, false, "missing", false, [], emptyDocument);
         }
 
-        var info = new FileInfo(configPath);
-        if (info.Length > MaximumConfigBytes)
-        {
-            throw new UnsafeProjectException($"config.toml exceeds the {MaximumConfigBytes:N0}-byte safety limit.");
-        }
-        var bytes = File.ReadAllBytes(configPath);
+        var bytes = ReadBoundedFile(configPath, "config.toml", _openRead);
         var hasBom = bytes.AsSpan().StartsWith(Utf8Bom);
         var payload = hasBom ? bytes.AsSpan(Utf8Bom.Length) : bytes.AsSpan();
         string text;
@@ -99,8 +112,11 @@ public sealed class ProjectConfigStore
         WorkspaceValidator.RejectReparsePoint(lockPath, "Context Mini lock");
 
         using var projectLock = AcquireLock(lockPath);
+        var identityBeforeLoad = CaptureMutationIdentity(codexDirectory, before.ConfigPath, lockPath);
         var locked = Load(root);
         EnsureExpected(locked, expected);
+        var lockedIdentity = CaptureMutationIdentity(codexDirectory, locked.ConfigPath, lockPath);
+        EnsureSameIdentity(identityBeforeLoad, lockedIdentity);
         if (!locked.Document.CanWrite)
         {
             throw new ConfigConflictException(locked.Document.Warning ?? "config.toml became unsafe before apply.");
@@ -113,14 +129,31 @@ public sealed class ProjectConfigStore
             return new ApplyResult(false, locked);
         }
 
+        var mutationReady = Load(root);
+        EnsureExpected(mutationReady, locked);
+        var mutationIdentity = CaptureMutationIdentity(codexDirectory, locked.ConfigPath, lockPath);
+        EnsureSameIdentity(lockedIdentity, mutationIdentity);
         _beforeAtomicMutation?.Invoke(locked.ConfigPath);
         if (desiredBytes.Length == 0)
         {
-            AtomicDelete(locked.ConfigPath, locked.SourceBytes);
+            AtomicDelete(
+                locked.ConfigPath,
+                locked.SourceBytes,
+                mutationIdentity.Directory,
+                _readIdentity,
+                mutationIdentity.Config ??
+                    throw new ConfigConflictException("config.toml identity disappeared before Auto."));
         }
         else
         {
-            AtomicWrite(locked.ConfigPath, desiredBytes, locked.SourceBytes, locked.Exists);
+            AtomicWrite(
+                locked.ConfigPath,
+                desiredBytes,
+                locked.SourceBytes,
+                locked.Exists,
+                mutationIdentity.Directory,
+                _readIdentity,
+                mutationIdentity.Config);
         }
 
         var after = Load(root);
@@ -181,9 +214,17 @@ public sealed class ProjectConfigStore
         throw new ConfigConflictException($"Another Context Mini instance is writing this project: {lastError?.Message}");
     }
 
-    private static void AtomicWrite(string configPath, byte[] desiredBytes, byte[] expectedBytes, bool expectedExists)
+    private static void AtomicWrite(
+        string configPath,
+        byte[] desiredBytes,
+        byte[] expectedBytes,
+        bool expectedExists,
+        FileSystemIdentity expectedDirectoryIdentity,
+        Func<string, bool, FileSystemIdentity> readIdentity,
+        FileSystemIdentity? expectedIdentity)
     {
         var directory = Path.GetDirectoryName(configPath)!;
+        EnsureDirectoryIdentity(directory, expectedDirectoryIdentity, readIdentity);
         var token = Guid.NewGuid().ToString("N");
         var tempPath = Path.Combine(directory, $".context-mini.{token}.tmp");
         var backupPath = Path.Combine(directory, $".context-mini.{token}.bak");
@@ -201,11 +242,22 @@ public sealed class ProjectConfigStore
                 stream.Flush(true);
             }
 
+            EnsureDirectoryIdentity(directory, expectedDirectoryIdentity, readIdentity);
+
             if (expectedExists)
             {
-                File.Replace(tempPath, configPath, backupPath, true);
+                if (expectedIdentity is null)
+                {
+                    throw new ConfigConflictException("The expected config.toml identity is unavailable.");
+                }
+                File.Replace(tempPath, configPath, backupPath, false);
                 mutationCommitted = true;
-                if (!File.ReadAllBytes(backupPath).AsSpan().SequenceEqual(expectedBytes))
+                if (readIdentity(backupPath, false) != expectedIdentity.Value)
+                {
+                    throw new ConfigConflictException(
+                        "config.toml was replaced after the final identity check; the external file will be restored.");
+                }
+                if (!ReadBoundedFile(backupPath, "atomic backup").AsSpan().SequenceEqual(expectedBytes))
                 {
                     throw new ConfigConflictException("config.toml changed during atomic replace; the external version will be restored.");
                 }
@@ -216,10 +268,12 @@ public sealed class ProjectConfigStore
                 mutationCommitted = true;
             }
 
-            if (!File.Exists(configPath) || !File.ReadAllBytes(configPath).AsSpan().SequenceEqual(desiredBytes))
+            EnsureDirectoryIdentity(directory, expectedDirectoryIdentity, readIdentity);
+            if (!File.Exists(configPath) || !ReadBoundedFile(configPath, "config.toml").AsSpan().SequenceEqual(desiredBytes))
             {
                 throw new ConfigConflictException("config.toml changed during post-write verification.");
             }
+            EnsureDirectoryIdentity(directory, expectedDirectoryIdentity, readIdentity);
             DeleteIfPresent(backupPath);
         }
         catch (Exception writeError)
@@ -229,10 +283,10 @@ public sealed class ProjectConfigStore
             {
                 if (mutationCommitted && File.Exists(backupPath))
                 {
-                    var backupBytes = File.ReadAllBytes(backupPath);
-                    if (File.Exists(configPath) && File.ReadAllBytes(configPath).AsSpan().SequenceEqual(desiredBytes))
+                    var backupBytes = ReadBoundedFile(backupPath, "atomic backup");
+                    if (File.Exists(configPath) && ReadBoundedFile(configPath, "config.toml").AsSpan().SequenceEqual(desiredBytes))
                     {
-                        File.Replace(backupPath, configPath, rollbackPath, true);
+                        File.Replace(backupPath, configPath, rollbackPath, false);
                         DeleteIfPresent(rollbackPath);
                     }
                     else
@@ -242,7 +296,7 @@ public sealed class ProjectConfigStore
                 }
                 else if (mutationCommitted && !expectedExists && File.Exists(configPath))
                 {
-                    if (File.ReadAllBytes(configPath).AsSpan().SequenceEqual(desiredBytes))
+                    if (ReadBoundedFile(configPath, "config.toml").AsSpan().SequenceEqual(desiredBytes))
                     {
                         File.Delete(configPath);
                     }
@@ -278,18 +332,31 @@ public sealed class ProjectConfigStore
         }
     }
 
-    private static void AtomicDelete(string configPath, byte[] expectedBytes)
+    private static void AtomicDelete(
+        string configPath,
+        byte[] expectedBytes,
+        FileSystemIdentity expectedDirectoryIdentity,
+        Func<string, bool, FileSystemIdentity> readIdentity,
+        FileSystemIdentity expectedIdentity)
     {
+        var directory = Path.GetDirectoryName(configPath)!;
+        EnsureDirectoryIdentity(directory, expectedDirectoryIdentity, readIdentity);
         if (!File.Exists(configPath))
         {
             throw new ConfigConflictException("config.toml was deleted externally immediately before Auto.");
         }
-        var directory = Path.GetDirectoryName(configPath)!;
         var backupPath = Path.Combine(directory, $".context-mini.{Guid.NewGuid():N}.bak");
         try
         {
             File.Move(configPath, backupPath);
-            if (!File.ReadAllBytes(backupPath).AsSpan().SequenceEqual(expectedBytes))
+            EnsureDirectoryIdentity(directory, expectedDirectoryIdentity, readIdentity);
+            if (readIdentity(backupPath, false) != expectedIdentity)
+            {
+                if (!File.Exists(configPath)) File.Move(backupPath, configPath);
+                throw new ConfigConflictException(
+                    "config.toml was replaced after the final identity check; the external file was preserved.");
+            }
+            if (!ReadBoundedFile(backupPath, "atomic backup").AsSpan().SequenceEqual(expectedBytes))
             {
                 if (!File.Exists(configPath)) File.Move(backupPath, configPath);
                 throw new ConfigConflictException("config.toml changed immediately before Auto; the external version was preserved.");
@@ -298,6 +365,7 @@ public sealed class ProjectConfigStore
             {
                 throw new ConfigConflictException($"A new external config.toml appeared during Auto; it and backup {backupPath} were preserved.");
             }
+            EnsureDirectoryIdentity(directory, expectedDirectoryIdentity, readIdentity);
             File.Delete(backupPath);
         }
         catch
@@ -306,10 +374,118 @@ public sealed class ProjectConfigStore
             throw;
         }
     }
+
+    private static void EnsureDirectoryIdentity(
+        string directory,
+        FileSystemIdentity expectedIdentity,
+        Func<string, bool, FileSystemIdentity> readIdentity)
+    {
+        try
+        {
+            WorkspaceValidator.RejectReparsePoint(directory, ".codex directory");
+            if (!Directory.Exists(directory) || File.Exists(directory) ||
+                readIdentity(directory, true) != expectedIdentity)
+            {
+                throw new ConfigConflictException(
+                    "The .codex directory was replaced after the final identity check; no write was accepted.");
+            }
+        }
+        catch (ConfigConflictException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw new ConfigConflictException(
+                $"The .codex directory could not be verified during the atomic mutation: {exception.Message}");
+        }
+    }
+
     private static void DeleteIfPresent(string path)
     {
         if (File.Exists(path)) File.Delete(path);
     }
+
+    private static MutationIdentity CaptureMutationIdentity(string codexDirectory, string configPath, string lockPath)
+    {
+        WorkspaceValidator.RejectReparsePoint(codexDirectory, ".codex directory");
+        WorkspaceValidator.RejectReparsePoint(configPath, "config.toml");
+        WorkspaceValidator.RejectReparsePoint(lockPath, "Context Mini lock");
+        if (!Directory.Exists(codexDirectory) || File.Exists(codexDirectory))
+        {
+            throw new UnsafeProjectException(".codex must remain a regular directory while applying.");
+        }
+        if (Directory.Exists(configPath))
+        {
+            throw new UnsafeProjectException("config.toml must remain a regular file while applying.");
+        }
+
+        try
+        {
+            var directoryIdentity = FileSystemIdentity.Read(codexDirectory, directory: true);
+            var configExists = File.Exists(configPath);
+            FileSystemIdentity? configIdentity = configExists
+                ? FileSystemIdentity.Read(configPath, directory: false)
+                : null;
+            return new MutationIdentity(directoryIdentity, configExists, configIdentity);
+        }
+        catch (IOException exception)
+        {
+            throw new ConfigConflictException($"The project changed while its filesystem identity was being verified: {exception.Message}");
+        }
+    }
+
+    private static void EnsureSameIdentity(MutationIdentity expected, MutationIdentity actual)
+    {
+        if (expected != actual)
+        {
+            throw new ConfigConflictException("The .codex directory or config.toml was replaced while applying. Reload before trying again.");
+        }
+    }
+
+    private static byte[] ReadBoundedFile(string path, string label, Func<string, Stream>? openRead = null)
+    {
+        using var stream = openRead is null
+            ? new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan)
+            : openRead(path) ?? throw new IOException($"The {label} reader returned no stream.");
+        var initialCapacity = 0;
+        if (stream.CanSeek)
+        {
+            var length = stream.Length;
+            if (length > MaximumConfigBytes)
+            {
+                throw new UnsafeProjectException($"{label} exceeds the {MaximumConfigBytes:N0}-byte safety limit.");
+            }
+            initialCapacity = checked((int)length);
+        }
+
+        using var output = new MemoryStream(initialCapacity);
+        var buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+        try
+        {
+            long total = 0;
+            while (true)
+            {
+                var remaining = MaximumConfigBytes + 1 - total;
+                var request = (int)Math.Min(buffer.Length, remaining);
+                var read = stream.Read(buffer, 0, request);
+                if (read == 0) break;
+                total += read;
+                if (total > MaximumConfigBytes)
+                {
+                    throw new UnsafeProjectException($"{label} exceeds the {MaximumConfigBytes:N0}-byte safety limit.");
+                }
+                output.Write(buffer, 0, read);
+            }
+            return output.ToArray();
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    private sealed record MutationIdentity(FileSystemIdentity Directory, bool ConfigExists, FileSystemIdentity? Config);
 
     private static string Fingerprint(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
 }

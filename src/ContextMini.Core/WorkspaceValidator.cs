@@ -2,8 +2,11 @@ namespace ContextMini.Core;
 
 public static class WorkspaceValidator
 {
-    public static string Normalize(string path)
+    public static string Normalize(string path) => Normalize(path, static root => new DriveInfo(root).DriveType);
+
+    internal static string Normalize(string path, Func<string, DriveType> driveTypeResolver)
     {
+        ArgumentNullException.ThrowIfNull(driveTypeResolver);
         if (string.IsNullOrWhiteSpace(path))
         {
             throw new UnsafeProjectException("Project path is required.");
@@ -23,10 +26,21 @@ public static class WorkspaceValidator
         {
             throw new UnsafeProjectException("UNC/network projects are not supported.");
         }
-        var root = Path.GetPathRoot(fullPath)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var pathRoot = Path.GetPathRoot(fullPath);
+        var root = pathRoot?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         if (string.IsNullOrEmpty(root) || string.Equals(fullPath, root, StringComparison.OrdinalIgnoreCase))
         {
             throw new UnsafeProjectException("A filesystem root cannot be used as a project.");
+        }
+        try
+        {
+            if (driveTypeResolver(pathRoot!) == DriveType.Network)
+                throw new UnsafeProjectException("Mapped network-drive projects are not supported.");
+        }
+        catch (UnsafeProjectException) { throw; }
+        catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            throw new UnsafeProjectException($"The project drive could not be validated: {exception.Message}");
         }
 
         var directory = new DirectoryInfo(fullPath);

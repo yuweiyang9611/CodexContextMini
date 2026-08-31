@@ -20,3 +20,5 @@ if ($LASTEXITCODE -ne 0) { throw "Context Mini tests failed with exit code $LAST
 if ($LASTEXITCODE -ne 0) { throw "Context Mini WPF tests failed with exit code $LASTEXITCODE." }
 & (Join-Path $root 'tests\appearance-xaml.tests.ps1')
 if ($LASTEXITCODE -ne 0) { throw "Appearance XAML tests failed with exit code $LASTEXITCODE." }
+& (Join-Path $root 'tests\maintenance-automation.tests.ps1')
+if ($LASTEXITCODE -ne 0) { throw "Maintenance automation tests failed with exit code $LASTEXITCODE." }
