@@ -12,23 +12,15 @@ public partial class App : Application
         base.OnStartup(e);
         _appearance = new AppearanceManager(this, AppearanceSettingsStore.CreateDefault());
         var recentProjects = RecentProjectsStore.CreateDefault();
-        var initialProject = ResolveInitialProject(e.Args, recentProjects);
+        var initialProject = ResolveInitialProject(e.Args);
         var window = new MainWindow(initialProject, _appearance, recentProjects);
         MainWindow = window;
         window.Show();
     }
 
-    internal static string ResolveInitialProject(string[] arguments, RecentProjectsStore recentProjects)
+    internal static string ResolveInitialProject(string[] arguments)
     {
-        if (arguments.Length > 0) return arguments[0];
-        try
-        {
-            return recentProjects.Load().FirstOrDefault() ?? string.Empty;
-        }
-        catch (Exception exception)
-        {
-            System.Diagnostics.Debug.WriteLine($"Could not restore the most recent project: {exception}");
-            return string.Empty;
-        }
+        // No project argument means user-wide defaults, regardless of recent projects.
+        return arguments.Length > 0 && arguments[0] != "--global" ? arguments[0] : string.Empty;
     }
 }

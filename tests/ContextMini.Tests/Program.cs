@@ -3,7 +3,7 @@ using ContextMini.Core;
 
 namespace ContextMini.Tests;
 
-internal static class Program
+internal static partial class Program
 {
     private static readonly UTF8Encoding Utf8NoBom = new(false);
     private static readonly byte[] Utf8Bom = [0xEF, 0xBB, 0xBF];
@@ -12,6 +12,7 @@ internal static class Program
 
     private static int Main()
     {
+        RunGlobalTests();
         Run("policy presets and custom bounds", PolicyPresets);
         Run("appearance preferences parse and resolve", AppearancePreferences);
         Run("appearance settings round-trip safely", AppearanceSettingsRoundTrip);

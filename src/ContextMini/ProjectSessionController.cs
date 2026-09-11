@@ -4,7 +4,7 @@ namespace ContextMini;
 
 internal interface IProjectSessionStore
 {
-    Task<ConfigSnapshot> LoadAsync(string projectRoot);
+    Task<ConfigSnapshot> LoadAsync(ConfigTarget target);
     Task<ApplyResult> ApplyAsync(ConfigSnapshot expected, ContextPlan plan);
 }
 
@@ -17,8 +17,8 @@ internal sealed class ProjectSessionFileStore : IProjectSessionStore
         _store = store ?? new ProjectConfigStore();
     }
 
-    public Task<ConfigSnapshot> LoadAsync(string projectRoot) =>
-        Task.Run(() => _store.Load(projectRoot));
+    public Task<ConfigSnapshot> LoadAsync(ConfigTarget target) =>
+        Task.Run(() => _store.Load(target));
 
     public Task<ApplyResult> ApplyAsync(ConfigSnapshot expected, ContextPlan plan) =>
         Task.Run(() => _store.Apply(expected, plan));
@@ -59,7 +59,10 @@ internal sealed class ProjectSessionController
 
     public bool CanClose => !IsApplyBusy;
 
-    public async Task<SessionLoadOutcome> LoadProjectAsync(string projectRoot, bool preserveDraft)
+    public Task<SessionLoadOutcome> LoadProjectAsync(string projectRoot, bool preserveDraft) =>
+        LoadTargetAsync(ConfigTarget.ForProject(projectRoot), preserveDraft);
+
+    public async Task<SessionLoadOutcome> LoadTargetAsync(ConfigTarget target, bool preserveDraft)
     {
         if (IsClosed || IsApplyBusy)
         {
@@ -75,7 +78,7 @@ internal sealed class ProjectSessionController
         IsLoadBusy = true;
         try
         {
-            var snapshot = await _store.LoadAsync(projectRoot);
+            var snapshot = await _store.LoadAsync(target);
             if (IsClosed || generation != _loadGeneration)
             {
                 return SessionLoadOutcome.SupersededOutcome(previousProjectRoot);
@@ -200,7 +203,7 @@ internal sealed class ProjectSessionController
         var operationVersion = _operationVersion;
         try
         {
-            var latest = await _store.LoadAsync(projectRoot);
+            var latest = await _store.LoadAsync(baseline.Target);
             if (!IsStillCurrent(baseline, projectRoot, operationVersion))
             {
                 return SessionMonitorOutcome.SupersededOutcome();
@@ -320,7 +323,7 @@ internal sealed class ProjectSessionController
         var baseline = Snapshot;
         try
         {
-            var latest = await _store.LoadAsync(projectRoot);
+            var latest = await _store.LoadAsync(baseline.Target);
             if (IsClosed || !ReferenceEquals(Snapshot, baseline) ||
                 !string.Equals(ProjectRoot, projectRoot, StringComparison.OrdinalIgnoreCase))
             {

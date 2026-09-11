@@ -45,6 +45,8 @@ public sealed record ConfigSnapshot(
     byte[] SourceBytes,
     ManagedDocument Document)
 {
+    public ConfigurationScope ConfigurationScope { get; init; } = ConfigurationScope.Project;
+    public ConfigTarget Target => new(ConfigurationScope, ProjectRoot);
     public bool ManagedBlockPresent => Document.BlockKind != ManagedBlockKind.None;
 }
 

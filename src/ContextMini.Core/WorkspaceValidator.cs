@@ -4,7 +4,7 @@ public static class WorkspaceValidator
 {
     public static string Normalize(string path) => Normalize(path, static root => new DriveInfo(root).DriveType);
 
-    internal static string Normalize(string path, Func<string, DriveType> driveTypeResolver)
+    internal static string Normalize(string path, Func<string, DriveType> driveTypeResolver, bool allowMissingLeaf = false)
     {
         ArgumentNullException.ThrowIfNull(driveTypeResolver);
         if (string.IsNullOrWhiteSpace(path))
@@ -44,12 +44,13 @@ public static class WorkspaceValidator
         }
 
         var directory = new DirectoryInfo(fullPath);
-        if (!directory.Exists)
+        if (!directory.Exists &&
+            (!allowMissingLeaf || File.Exists(fullPath) || directory.Parent?.Exists != true))
         {
             throw new UnsafeProjectException($"Project directory does not exist: {fullPath}");
         }
 
-        for (var cursor = directory; cursor is not null; cursor = cursor.Parent)
+        for (var cursor = directory.Exists ? directory : directory.Parent; cursor is not null; cursor = cursor.Parent)
         {
             if ((cursor.Attributes & FileAttributes.ReparsePoint) != 0)
             {

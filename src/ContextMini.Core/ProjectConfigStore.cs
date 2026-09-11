@@ -40,10 +40,13 @@ public sealed class ProjectConfigStore
         _readIdentity = readIdentity ?? FileSystemIdentity.Read;
     }
 
-    public ConfigSnapshot Load(string projectRoot)
+    public ConfigSnapshot Load(string projectRoot) => Load(ConfigTarget.ForProject(projectRoot));
+
+    public ConfigSnapshot Load(ConfigTarget target)
     {
-        var root = WorkspaceValidator.Normalize(projectRoot);
-        var codexDirectory = Path.Combine(root, ".codex");
+        target = target.Normalize();
+        var root = target.Root;
+        var codexDirectory = target.ConfigDirectory;
         var configPath = Path.Combine(codexDirectory, "config.toml");
         WorkspaceValidator.RejectReparsePoint(codexDirectory, ".codex directory");
         WorkspaceValidator.RejectReparsePoint(configPath, "config.toml");
@@ -54,7 +57,8 @@ public sealed class ProjectConfigStore
         if (!File.Exists(configPath))
         {
             var emptyDocument = _editor.Analyze(string.Empty);
-            return new ConfigSnapshot(root, configPath, false, "missing", false, [], emptyDocument);
+            return new ConfigSnapshot(root, configPath, false, "missing", false, [], emptyDocument)
+                { ConfigurationScope = target.Scope };
         }
 
         var bytes = ReadBoundedFile(configPath, "config.toml", _openRead);
@@ -69,20 +73,22 @@ public sealed class ProjectConfigStore
         {
             throw new UnsafeProjectException($"config.toml must be valid UTF-8: {exception.Message}");
         }
-        return new ConfigSnapshot(root, configPath, true, Fingerprint(bytes), hasBom, bytes, _editor.Analyze(text));
+        return new ConfigSnapshot(root, configPath, true, Fingerprint(bytes), hasBom, bytes, _editor.Analyze(text))
+            { ConfigurationScope = target.Scope };
     }
 
     public ApplyResult Apply(ConfigSnapshot expected, ContextPlan plan)
     {
         ArgumentNullException.ThrowIfNull(expected);
         ContextPolicy.Validate(plan);
-        var root = WorkspaceValidator.Normalize(expected.ProjectRoot);
+        var target = expected.Target.Normalize();
+        var root = target.Root;
         if (!string.Equals(root, expected.ProjectRoot, StringComparison.OrdinalIgnoreCase))
         {
             throw new ConfigConflictException("The selected project changed before apply.");
         }
 
-        var before = Load(root);
+        var before = Load(target);
         EnsureExpected(before, expected);
         if (!before.Document.CanWrite)
         {
@@ -113,7 +119,7 @@ public sealed class ProjectConfigStore
 
         using var projectLock = AcquireLock(lockPath);
         var identityBeforeLoad = CaptureMutationIdentity(codexDirectory, before.ConfigPath, lockPath);
-        var locked = Load(root);
+        var locked = Load(target);
         EnsureExpected(locked, expected);
         var lockedIdentity = CaptureMutationIdentity(codexDirectory, locked.ConfigPath, lockPath);
         EnsureSameIdentity(identityBeforeLoad, lockedIdentity);
@@ -129,7 +135,7 @@ public sealed class ProjectConfigStore
             return new ApplyResult(false, locked);
         }
 
-        var mutationReady = Load(root);
+        var mutationReady = Load(target);
         EnsureExpected(mutationReady, locked);
         var mutationIdentity = CaptureMutationIdentity(codexDirectory, locked.ConfigPath, lockPath);
         EnsureSameIdentity(lockedIdentity, mutationIdentity);
@@ -156,7 +162,7 @@ public sealed class ProjectConfigStore
                 mutationIdentity.Config);
         }
 
-        var after = Load(root);
+        var after = Load(target);
         if (desiredBytes.Length == 0)
         {
             if (after.Exists) throw new IOException("Post-apply verification expected config.toml to be absent.");
@@ -189,7 +195,8 @@ public sealed class ProjectConfigStore
 
     private static void EnsureExpected(ConfigSnapshot actual, ConfigSnapshot expected)
     {
-        if (!string.Equals(actual.ConfigPath, expected.ConfigPath, StringComparison.OrdinalIgnoreCase) ||
+        if (actual.ConfigurationScope != expected.ConfigurationScope ||
+            !string.Equals(actual.ConfigPath, expected.ConfigPath, StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(actual.Fingerprint, expected.Fingerprint, StringComparison.Ordinal))
         {
             throw new ConfigConflictException("config.toml changed outside Context Mini. Reload before applying.");

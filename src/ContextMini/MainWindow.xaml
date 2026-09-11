@@ -153,7 +153,7 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel Margin="0,0,20,0" VerticalAlignment="Center">
                     <TextBlock Text="Context Mini" FontSize="26" FontWeight="SemiBold" Foreground="{DynamicResource HeaderTextBrush}" />
-                    <TextBlock Text="独立管理 Codex 项目上下文请求与自动压缩阈值"
+                    <TextBlock Text="管理 Codex 全局默认与项目上下文设置"
                                Margin="0,5,0,0"
                                Foreground="{DynamicResource HeaderSecondaryTextBrush}"
                                TextTrimming="CharacterEllipsis" />
@@ -198,7 +198,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel>
-                            <TextBlock Text="当前项目" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource SecondaryTextBrush}" />
+                            <TextBlock Text="配置范围" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource SecondaryTextBrush}" />
                             <TextBlock x:Name="ProjectNameText"
                                        Margin="0,5,0,0"
                                        FontSize="18"
@@ -220,7 +220,7 @@
                                 <TextBlock Text="最近项目" Margin="0,0,10,0" VerticalAlignment="Center" Foreground="{DynamicResource SecondaryTextBrush}" />
                                 <ComboBox x:Name="RecentProjectsCombo"
                                           Grid.Column="1"
-                                          MinWidth="260"
+                                          MinWidth="160"
                                           MaxWidth="440"
                                           HorizontalAlignment="Stretch"
                                           VerticalContentAlignment="Center"
@@ -233,18 +233,24 @@
                                         Click="OpenRecentProject_Click" />
                             </Grid>
                         </StackPanel>
-                        <Button Grid.Column="1"
-                                Content="选择项目…"
-                                Style="{StaticResource SecondaryButton}"
-                                Click="SwitchProject_Click"
-                                VerticalAlignment="Top" />
+                        <StackPanel Grid.Column="1" VerticalAlignment="Top">
+                            <Button x:Name="GlobalSettingsButton"
+                                    Content="全局默认"
+                                    AutomationProperties.Name="编辑全局默认上下文"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Click="GlobalSettings_Click" />
+                            <Button Content="选择项目…"
+                                    Margin="0,8,0,0"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Click="SwitchProject_Click" />
+                        </StackPanel>
                     </Grid>
                 </Border>
 
                 <Border Style="{StaticResource CardStyle}">
                     <StackPanel>
                         <TextBlock Text="上下文配置" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}" />
-                        <TextBlock Text="预设和滑块只修改草稿；点击应用并确认后才写入项目。" Margin="0,4,0,16" Foreground="{DynamicResource SecondaryTextBrush}" />
+                        <TextBlock Text="预设和滑块只修改草稿；预览并确认后写入当前范围。" Margin="0,4,0,16" Foreground="{DynamicResource SecondaryTextBrush}" />
 
                         <StackPanel Orientation="Horizontal">
                             <Button x:Name="AutoButton" Content="Auto" Style="{StaticResource PresetButton}" Click="Auto_Click" />

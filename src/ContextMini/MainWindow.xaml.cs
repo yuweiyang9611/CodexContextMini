@@ -167,18 +167,11 @@ public partial class MainWindow : Window
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         RefreshRecentProjects();
-        var loaded = false;
         if (string.IsNullOrWhiteSpace(_initialProject))
         {
-            ShowUnavailableProject(
-                string.Empty,
-                new UnsafeProjectException("尚未选择项目。请选择一个本地 Codex 项目目录。"));
+            await LoadGlobalAsync();
         }
-        else
-        {
-            loaded = await LoadProjectAsync(_initialProject, preserveDraft: false, resetOnFailure: true);
-        }
-        if (!loaded && !_session.IsClosed)
+        else if (!await LoadProjectAsync(_initialProject, preserveDraft: false, resetOnFailure: true) && !_session.IsClosed)
         {
             await PromptForProjectAsync();
         }
@@ -188,9 +181,10 @@ public partial class MainWindow : Window
     private async Task<bool> LoadProjectAsync(
         string projectRoot,
         bool preserveDraft,
-        bool resetOnFailure)
+        bool resetOnFailure,
+        ConfigTarget? target = null)
     {
-        var load = _session.LoadProjectAsync(projectRoot, preserveDraft);
+        var load = _session.LoadTargetAsync(target ?? ConfigTarget.ForProject(projectRoot), preserveDraft);
         SetDraftEditingEnabled(false);
         UpdateConflictActions();
         UpdateApplyState();
@@ -209,23 +203,23 @@ public partial class MainWindow : Window
                 {
                     _session.RequireReload();
                     ShowReloadRequired(
-                        $"无法重新读取当前项目：{exception.Message}",
+                        $"无法重新读取当前配置：{exception.Message}",
                         "当前磁盘基线无法确认；草稿已保留，请稍后重新读取。");
                     MessageBox.Show(
                         this,
                         exception.Message,
-                        "无法重新读取项目",
+                        "无法重新读取配置",
                         MessageBoxButton.OK,
                         MessageBoxImage.Error);
                 }
                 else
                 {
                     StatusText.Text =
-                        $"无法打开所选项目，仍保留当前项目和草稿：{exception.Message}";
+                        $"无法打开所选配置，仍保留当前配置和草稿：{exception.Message}";
                     MessageBox.Show(
                         this,
                         exception.Message,
-                        "无法打开所选项目",
+                        "无法打开所选配置",
                         MessageBoxButton.OK,
                         MessageBoxImage.Error);
                 }
@@ -246,7 +240,7 @@ public partial class MainWindow : Window
                 ApplySessionSnapshotToUi(snapshot);
             }
 
-            RememberProject(snapshot.ProjectRoot);
+            if (!snapshot.Target.IsGlobal) RememberProject(snapshot.ProjectRoot);
             StatusText.Text = snapshot.Document.Warning ??
                 (preserveDraft
                     ? "已重新读取磁盘配置，并保留当前草稿。"
@@ -298,13 +292,13 @@ public partial class MainWindow : Window
             _updatingUi = false;
         }
 
-        ProjectNameText.Text = "未选择可用项目";
+        ProjectNameText.Text = "未加载可用配置";
         ProjectPathText.Text = projectRoot;
         ProjectPathText.ToolTip = projectRoot;
         TrustStatusText.Text = "路径尚未通过安全检查。";
-        DiskStatusText.Text = "无法读取项目";
+        DiskStatusText.Text = "无法读取配置";
         StatusText.Text = exception.Message;
-        WarningText.Text = "请选择一个存在、可信且不经过符号链接的本地项目目录。";
+        WarningText.Text = "请检查全局配置目录（CODEX_HOME 或用户目录下的 .codex），或选择一个本地项目。";
         WarningBorder.Visibility = Visibility.Visible;
         ConflictBorder.Visibility = Visibility.Collapsed;
         UpdateConflictActions();
@@ -333,11 +327,13 @@ public partial class MainWindow : Window
 
     private void UpdateProjectText(ConfigSnapshot snapshot)
     {
-        ProjectNameText.Text = new DirectoryInfo(snapshot.ProjectRoot).Name;
-        ProjectPathText.Text = snapshot.ProjectRoot;
-        ProjectPathText.ToolTip = snapshot.ProjectRoot;
-        TrustStatusText.Text =
-            "路径安全检查已通过；Codex 是否信任该项目以及配置是否实际生效，尚未验证。";
+        var global = snapshot.Target.IsGlobal;
+        ProjectNameText.Text = global ? "全局默认 · 新建对话" : new DirectoryInfo(snapshot.ProjectRoot).Name;
+        ProjectPathText.Text = snapshot.ConfigPath;
+        ProjectPathText.ToolTip = snapshot.ConfigPath;
+        TrustStatusText.Text = global
+            ? "应用后，新建本机 Codex 对话默认使用此设置。项目配置、配置档案和启动参数可覆盖全局默认；已打开的 Codex 可能需要重启。"
+            : "仅用于此项目，优先于全局默认。项目需受 Codex 信任；选择 Auto 可移除本工具的项目覆盖。";
         OpenConfigButton.IsEnabled = snapshot.Exists;
     }
 
@@ -598,11 +594,32 @@ public partial class MainWindow : Window
             await LoadProjectAsync(
                 _session.ProjectRoot,
                 preserveDraft: choice == MessageBoxResult.Yes,
-                resetOnFailure: false);
+                resetOnFailure: false, target: _session.Snapshot!.Target);
             return;
         }
 
-        await LoadProjectAsync(_session.ProjectRoot, preserveDraft: false, resetOnFailure: false);
+        await LoadProjectAsync(_session.ProjectRoot, preserveDraft: false, resetOnFailure: false, target: _session.Snapshot!.Target);
+    }
+
+    private async Task LoadGlobalAsync()
+    {
+        try
+        {
+            var target = ConfigTarget.GlobalDefault();
+            await LoadProjectAsync(target.Root, preserveDraft: false, resetOnFailure: _session.Snapshot is null, target: target);
+        }
+        catch (Exception exception)
+        {
+            if (_session.Snapshot is null) ShowUnavailableProject(string.Empty, exception);
+            StatusText.Text = $"无法打开全局配置：{exception.Message}";
+        }
+    }
+
+    private async void GlobalSettings_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session.IsApplyBusy || _session.IsLoadBusy || _session.Snapshot?.Target.IsGlobal == true) return;
+        if (!ConfirmProjectSwitch()) return;
+        await LoadGlobalAsync();
     }
 
     private async void SwitchProject_Click(object sender, RoutedEventArgs e)
@@ -641,7 +658,7 @@ public partial class MainWindow : Window
         (!_session.IsDirty && _session.IsInputValid) ||
         MessageBox.Show(
             this,
-            "切换项目会放弃尚未应用的草稿。继续吗？",
+            "切换配置范围或项目会放弃尚未应用的草稿。继续吗？",
             "Context Mini",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning) == MessageBoxResult.Yes;
@@ -650,7 +667,8 @@ public partial class MainWindow : Window
     {
         if (_session.IsApplyBusy || _session.IsLoadBusy) return;
         if (RecentProjectsCombo.SelectedItem is not string projectRoot) return;
-        if (string.Equals(projectRoot, _session.ProjectRoot, StringComparison.OrdinalIgnoreCase)) return;
+        if (_session.Snapshot?.Target.IsGlobal != true &&
+            string.Equals(projectRoot, _session.ProjectRoot, StringComparison.OrdinalIgnoreCase)) return;
         if (!ConfirmProjectSwitch()) return;
         await LoadProjectAsync(projectRoot, preserveDraft: false, resetOnFailure: _session.Snapshot is null);
     }
@@ -680,7 +698,7 @@ public partial class MainWindow : Window
             ? "Auto（移除 Context Mini/旧插件管理块）"
             : $"窗口 {ticket.Plan.WindowTokens:N0}，压缩 {ticket.Plan.CompactAtTokens:N0}，作用域 {ticket.Plan.Scope}";
         var confirmation =
-            $"目标项目：{ticket.Expected.ProjectRoot}\n配置文件：{ticket.Expected.ConfigPath}\n计划：{profileText}\n\n{preview}\n\n确认写入？";
+            $"作用范围：{(ticket.Expected.Target.IsGlobal ? "全局默认（新建对话）" : "当前项目")}\n配置文件：{ticket.Expected.ConfigPath}\n计划：{profileText}\n\n{preview}\n\n确认写入？";
         if (MessageBox.Show(
                 this,
                 confirmation,
@@ -736,9 +754,11 @@ public partial class MainWindow : Window
             var result = outcome.Result;
             ClearExternalConflictVisual();
             ApplySessionSnapshotToUi(result.Snapshot);
-            RememberProject(result.Snapshot.ProjectRoot);
+            if (!result.Snapshot.Target.IsGlobal) RememberProject(result.Snapshot.ProjectRoot);
             StatusText.Text = result.Changed
-                ? "应用成功。请新建 Codex 任务或重启应用后验证是否实际生效。"
+                ? (result.Snapshot.Target.IsGlobal
+                    ? "全局默认已保存。请重启 Codex 后新建对话；项目覆盖和模型上限仍然适用。"
+                    : "项目配置已保存。请新建 Codex 任务或重启应用后验证是否实际生效。")
                 : "磁盘内容已经与草稿一致。";
         }
         finally
@@ -893,6 +913,7 @@ public partial class MainWindow : Window
         RebaseDraftButton.IsEnabled = pendingAvailable && actionsEnabled;
         ViewExternalChangesButton.IsEnabled = pendingAvailable && actionsEnabled;
         DiscardDraftButton.IsEnabled = pendingAvailable && actionsEnabled;
+        GlobalSettingsButton.IsEnabled = actionsEnabled;
         ReloadConflictButton.IsEnabled = _session.ProjectRoot is not null && actionsEnabled;
     }
 

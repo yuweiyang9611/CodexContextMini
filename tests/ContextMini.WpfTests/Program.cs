@@ -5,7 +5,7 @@ using ContextMini.Core;
 
 namespace ContextMini.WpfTests;
 
-internal static class Program
+internal static partial class Program
 {
     private const string PaletteMarkerKey = "ContextMiniPaletteMarker";
 
@@ -17,6 +17,7 @@ internal static class Program
     private static int Main()
     {
         _application = new Application();
+        RunGlobalSessionTests();
         Run("manual and system themes switch live", ThemeSwitches);
         Run("failed appearance saves can be retried", SaveFailureCanBeRetried);
         Run("high contrast uses Windows system brushes", HighContrastUsesSystemBrushes);
@@ -25,7 +26,7 @@ internal static class Program
         Run("draft rebasing keeps the draft and changes only the baseline", DraftRebaseKeepsDraft);
         Run("managed block previews show scope-preserving changes", ManagedPreviewPreservesScope);
         Run("recent projects are deduplicated and bounded", RecentProjectsAreDeduplicated);
-        Run("startup restores the newest recent project or requests selection", StartupProjectResolution);
+        Run("startup defaults to global and accepts an explicit project", StartupProjectResolution);
         Run("session load blocks edits and preserves the captured draft", SessionLoadVsEdit);
         Run("session ignores an old monitor result after apply", SessionApplyVsMonitor);
         Run("session rejects a preview after a byte-identical snapshot replacement", SessionSameBytesInvalidatePreview);
@@ -391,11 +392,12 @@ internal static class Program
             var populated = new RecentProjectsStore(Path.Combine(root, "populated", "recent-projects.txt"));
             populated.Remember(project);
 
-            Equal(project, App.ResolveInitialProject([], populated));
-            Equal("D:\\explicit-project", App.ResolveInitialProject(["D:\\explicit-project"], populated));
+            Equal(string.Empty, App.ResolveInitialProject([]));
+            Equal(string.Empty, App.ResolveInitialProject(["--global"]));
+            Equal("D:\\explicit-project", App.ResolveInitialProject(["D:\\explicit-project"]));
 
             var empty = new RecentProjectsStore(Path.Combine(root, "empty", "recent-projects.txt"));
-            Equal(string.Empty, App.ResolveInitialProject([], empty));
+            Equal(string.Empty, App.ResolveInitialProject([]));
         });
     }
 
@@ -648,12 +650,14 @@ internal sealed class ControlledProjectSessionStore : IProjectSessionStore
     private readonly Queue<Func<Task<ApplyResult>>> _applies = new();
 
     public int ApplyCallCount { get; private set; }
+    public ConfigTarget? LastLoadTarget { get; private set; }
 
-    public Task<ConfigSnapshot> LoadAsync(string projectRoot)
+    public Task<ConfigSnapshot> LoadAsync(ConfigTarget target)
     {
+        LastLoadTarget = target;
         if (_loads.Count == 0)
         {
-            throw new InvalidOperationException($"No controlled load was queued for {projectRoot}.");
+            throw new InvalidOperationException($"No controlled load was queued for {target.ConfigPath}.");
         }
         return _loads.Dequeue()();
     }

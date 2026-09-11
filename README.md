@@ -2,15 +2,15 @@
 
 [![CI](https://github.com/yuweiyang9611/CodexContextMini/actions/workflows/ci-release.yml/badge.svg)](https://github.com/yuweiyang9611/CodexContextMini/actions/workflows/ci-release.yml)
 
-Context Mini is an independent Windows WPF application for managing project-scoped Codex context-window and automatic-compaction requests. It is not a Codex plugin and contains no MCP server, skill, marketplace package, HTML widget, or plugin runtime.
+Context Mini is an independent Windows WPF application for managing global defaults and project-scoped Codex context-window and automatic-compaction requests. It is not a Codex plugin and contains no MCP server, skill, marketplace package, HTML widget, or plugin runtime.
 
 > [!IMPORTANT]
-> Context Mini cannot unlock or increase a model, account, or server-side context limit. It writes project-level client configuration requests. The effective host limit always wins, and changes normally require a new Codex task or app restart.
+> Context Mini cannot unlock or increase a model, account, or server-side context limit. It writes user-level or project-level client configuration requests. The effective host limit always wins, and changes normally require a new Codex task or app restart.
 
 ## Download and requirements
 
 - Windows x64.
-- The target project must be trusted by Codex before project-level `.codex/config.toml` is loaded.
+- For project overrides, the target project must be trusted by Codex before its `.codex/config.toml` is loaded. Global defaults do not depend on trusting an individual project.
 
 Choose one ZIP from the GitHub Release:
 
@@ -52,7 +52,7 @@ The source build is pinned to `.NET SDK 10.0.400` and has no third-party NuGet p
 # Or publish a larger self-contained win-x64 bundle.
 .\publish.cmd -SelfContained
 
-# Launch the published app against the current directory.
+# Launch the published app to edit global defaults.
 .\START-MINI.cmd
 ```
 
@@ -64,7 +64,20 @@ You can also pass a project explicitly:
 .\.artifacts\publish\win-x64\ContextMini.exe "D:\path\to\trusted-project"
 ```
 
-When launched without a project argument, Context Mini reopens the most recent valid project or prompts for one on first use. The window also keeps up to eight recent projects and includes a **选择项目…** button.
+When launched without arguments (or with `--global`), Context Mini opens **全局默认**. `START-MINI.cmd` behaves the same way and forwards explicit arguments. Recent projects are still available from the list, but never replace global mode at startup. The window keeps up to eight recent projects and includes **全局默认** and **选择项目…** buttons. Switching scope or project asks before discarding an unapplied draft.
+
+## Global defaults for new conversations
+
+1. Open Context Mini without arguments, or click **全局默认**.
+2. Select a preset or enter the context window and automatic-compaction threshold.
+3. Click **确认并应用**, verify the displayed scope and exact file path, and confirm.
+4. Restart Codex if it is already running, then create a new conversation.
+
+Global mode writes `%USERPROFILE%\.codex\config.toml` by default. If `CODEX_HOME` is set in Context Mini's environment, it writes `%CODEX_HOME%\config.toml` instead (not a nested `.codex` directory). The override must be an absolute local path; when its final directory does not exist, its parent must already exist. Context Mini and the Codex client must use the same Codex home. Loading and monitoring do not create files or directories.
+
+These settings provide defaults for new conversations in local Codex clients that read this user configuration. They do not rewrite existing conversations or configure remote hosts/cloud tasks. Project settings, selected profiles, CLI overrides, and organization requirements can still take precedence. To let a project inherit the global default, open that project and choose **Auto** to remove its Mini-managed override. Other manually defined overrides must be resolved separately. See the official [configuration precedence](https://learn.chatgpt.com/docs/config-file/config-basic).
+
+**Auto in global mode** removes only the global Mini-managed block; **Auto in project mode** removes only that project's Mini-managed block. Neither action resets all Codex settings. Existing manual context keys, duplicate markers, and malformed blocks stay read-only; use **打开 config.toml** to inspect and resolve them before applying. The app never silently takes ownership of existing manual settings.
 
 ## Appearance
 
@@ -86,7 +99,7 @@ If `config.toml` changes externally while a draft is dirty, Context Mini preserv
 
 ## Configuration boundary
 
-Context Mini manages only this block at the beginning of the selected project's `.codex/config.toml`:
+Context Mini manages only this block at the beginning of the selected global or project `config.toml`:
 
 ```toml
 # >>> codex-context-mini:v1
@@ -111,10 +124,10 @@ Auto removes only the managed block. Content outside it is preserved. A valid le
 ## Tests
 
 ```powershell
-# Context configuration Core and appearance settings: 30 regression cases
+# Context configuration Core, global targets, and appearance settings: 36 regression cases
 dotnet run --project .\tests\ContextMini.Tests\ContextMini.Tests.csproj -c Release
 
-# WPF themes, layout, exact input, session races, rebase, preview, startup, and recent projects: 16 cases
+# WPF themes, layout, exact input, session races, rebase, preview, startup, global scope, and recent projects: 19 cases
 dotnet run --project .\tests\ContextMini.WpfTests\ContextMini.WpfTests.csproj -c Release
 
 # Light/Dark resource symmetry, dynamic references, and contrast thresholds
@@ -169,7 +182,7 @@ They block non-approved email addresses in Git identity, commit messages, staged
 ## Repository layout
 
 ```text
-src/ContextMini.Core/       Safe config parser and atomic store
+src/ContextMini.Core/       Global/project targets, safe config parser and atomic store
 src/ContextMini/            WPF desktop application
 tests/ContextMini.Tests/    Zero-dependency Core regression runner
 tests/ContextMini.WpfTests/ WPF theme, layout, and workflow-state regression runner

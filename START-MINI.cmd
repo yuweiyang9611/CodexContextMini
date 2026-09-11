@@ -6,4 +6,4 @@ if not exist "%APP%" (
   echo Run publish.cmd first.
   exit /b 1
 )
-"%APP%" "%CD%"
+"%APP%" %*
