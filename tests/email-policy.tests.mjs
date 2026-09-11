@@ -164,6 +164,53 @@ test("email privacy policy", async (t) => {
     assert.equal(result.stderr.includes(blockedEmail), false);
   });
 
+  await t.test("head mode excludes unrelated fetched refs but checks them after merging", () => {
+    const root = createRepository(t);
+    const baseline = commit(root, "baseline.txt", "safe\n", "baseline");
+    git(root, "checkout", "-b", "other-change");
+    const unrelated = commit(root, "other.txt", "safe\n", "contact " + blockedEmail);
+    git(root, "update-ref", "refs/remotes/origin/other-change", unrelated);
+    git(root, "tag", "other-tag", unrelated);
+    git(root, "checkout", "main");
+    git(root, "branch", "-D", "other-change");
+    const clean = check(root, "head");
+    assert.equal(clean.status, 0, clean.stderr);
+    assert.equal(check(root, "repository").status, 1);
+    git(root, "checkout", "--detach", baseline);
+    assert.equal(check(root, "head").status, 0);
+    git(root, "checkout", "main");
+    git(root, "merge", "--no-ff", "-m", "merge other change", unrelated);
+    const merged = check(root, "head");
+    assert.equal(merged.status, 1);
+    assert.equal(merged.stderr.includes(blockedEmail), false);
+  });
+
+  await t.test("head mode rejects historical metadata and blobs removed from the current tree", () => {
+    const root = createRepository(t);
+    commit(root, "baseline.txt", "safe\n", "baseline");
+    commit(root, "old.txt", "contact " + blockedEmail + "\n", "old content", {
+      GIT_AUTHOR_EMAIL: blockedEmail,
+      GIT_COMMITTER_EMAIL: blockedEmail,
+    });
+    git(root, "rm", "old.txt");
+    git(root, "commit", "-m", "remove old file");
+    const result = check(root, "head");
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /author at/u);
+    assert.match(result.stderr, /content at/u);
+    assert.equal(result.stderr.includes(blockedEmail), false);
+  });
+
+  await t.test("head mode refuses a shallow checkout", () => {
+    const root = createRepository(t);
+    commit(root, "baseline.txt", "safe\n", "baseline");
+    const head = commit(root, "latest.txt", "safe\n", "latest");
+    writeFileSync(path.join(root, ".git", "shallow"), head + "\n");
+    const result = check(root, "head");
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /requires complete history/u);
+  });
+
   await t.test("pre-push scans only the commits and blobs being introduced", () => {
     const root = createRepository(t);
     const remoteCommit = commit(root, "baseline.txt", "safe\n", "baseline");

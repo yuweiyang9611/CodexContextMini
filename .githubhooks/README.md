@@ -23,7 +23,8 @@ The installer refuses to replace an existing hooks path unless `-Force` is suppl
 - `pre-commit` checks repository-local `user.email` and all staged text.
 - `commit-msg` checks the proposed commit message.
 - `pre-push` checks author/committer metadata, messages, and trees for every commit being pushed.
-- GitHub CI scans the full history reachable from the tested commit, providing a second layer if local hooks were not installed or were bypassed.
+- GitHub CI uses `--mode head` to scan the tested commit and every reachable ancestor, including historical file contents and paths. It requires a complete, non-shallow checkout and excludes unrelated fetched branches and tags.
+- `--mode repository` remains available for an explicit audit of all local refs, remote-tracking refs, tags, and their reachable history.
 
 Allowed by default:
 

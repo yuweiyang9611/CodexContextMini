@@ -42,7 +42,7 @@ jobs:
 
       - name: Enforce email privacy policy
         shell: powershell
-        run: node .\.githubhooks\check-email-policy.mjs --mode repository
+        run: node .\.githubhooks\check-email-policy.mjs --mode head
 
       - name: Test email privacy hooks
         shell: powershell

@@ -52,7 +52,7 @@ function parseArguments(args) {
     else if (value === "--message-file") parsed.messageFile = requireValue(args, ++index, value);
     else throw new Error(`Unknown argument: ${value}`);
   }
-  if (!["staged", "commit-message", "pre-push", "repository"].includes(parsed.mode)) {
+  if (!["staged", "commit-message", "pre-push", "head", "repository"].includes(parsed.mode)) {
     throw new Error(`Unsupported mode: ${parsed.mode}`);
   }
   return parsed;
@@ -315,6 +315,18 @@ function scanPrePush() {
   for (const range of revisions) scanReachableObjects(range);
 }
 
+function scanHead() {
+  if (git(["rev-parse", "--is-shallow-repository"]).stdout.trim() === "true") {
+    throw new Error("head mode requires complete history; fetch with fetch-depth: 0.");
+  }
+  const head = git(["rev-parse", "--verify", "HEAD^{commit}"]).stdout.trim();
+  if (!objectIdPattern.test(head)) throw new Error("Unable to resolve the checked-out commit.");
+  // Audit the tested commit and every ancestor, including deleted historical blobs.
+  // Remote branches fetched by checkout are not part of this revision's history.
+  scanCommitSet(commitsFor([head]));
+  scanReachableObjects([head]);
+}
+
 function scanRepository() {
   const commitHeads = new Set();
   const headResult = git(["rev-parse", "HEAD^{commit}"], { allowed: [0, 1, 128] });
@@ -357,6 +369,7 @@ try {
   if (options.mode === "staged") scanStaged();
   else if (options.mode === "commit-message") scanCommitMessage();
   else if (options.mode === "pre-push") scanPrePush();
+  else if (options.mode === "head") scanHead();
   else scanRepository();
 
   if (findings.size > 0) {

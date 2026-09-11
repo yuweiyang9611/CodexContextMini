@@ -177,7 +177,7 @@ Enable the committed hooks once after cloning:
 .\.githubhooks\install.ps1
 ```
 
-They block non-approved email addresses in Git identity, commit messages, staged raw blobs and paths, tags/refs, and commits before push. CI performs the same full-history audit. See [`.githubhooks/README.md`](.githubhooks/README.md).
+They block non-approved email addresses in Git identity, commit messages, staged raw blobs and paths, tags/refs, and commits before push. CI audits the tested commit and its complete reachable history; unrelated fetched branches are checked in their own runs. See [`.githubhooks/README.md`](.githubhooks/README.md).
 
 ## Repository layout
 
