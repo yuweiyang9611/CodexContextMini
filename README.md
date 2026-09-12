@@ -109,7 +109,7 @@ model_auto_compact_token_limit_scope = "total"
 # <<< codex-context-mini:v1
 ```
 
-Auto removes only the managed block. Content outside it is preserved. A valid legacy `context-window-manager` block can be read and is migrated to the Mini format on the next apply; its `total` or `body_after_prefix` compaction scope is preserved. Malformed, duplicated, mixed, or conflicting keys remain read-only.
+Auto removes only the managed block. Content outside it is preserved. A valid legacy `context-window-manager` block can be read and is migrated to the Mini format on the next apply; its `total` or `body_after_prefix` compaction scope is preserved. Malformed, duplicated, mixed, or conflicting keys remain read-only. Quoted strings and multiline TOML strings may contain example context keys or managed-block markers without being treated as configuration. Unterminated strings and ambiguous quote boundaries stay read-only. This lexical check is not a full TOML validator.
 
 ## Safety
 
@@ -124,7 +124,7 @@ Auto removes only the managed block. Content outside it is preserved. A valid le
 ## Tests
 
 ```powershell
-# Context configuration Core, global targets, and appearance settings: 36 regression cases
+# Context configuration Core, global targets, TOML strings, and appearance settings: 39 regression cases
 dotnet run --project .\tests\ContextMini.Tests\ContextMini.Tests.csproj -c Release
 
 # WPF themes, layout, exact input, session races, rebase, preview, startup, global scope, and recent projects: 19 cases
@@ -149,6 +149,8 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
 CI builds the WPF XAML on Windows, runs all tests, validates every workflow with a fixed-version actionlint archive whose official SHA-256 is pinned, and inspects both release ZIP manifests on every push and pull request. Release ZIP entries use a stable ordinal order and fixed timestamp. A main-branch Release publishes the tested assets rather than rebuilding them, then downloads every remote asset and checks it against GitHub's recorded SHA-256 digest. Newly created or automatically recovered same-commit Releases are also compared byte-for-byte with the tested assets. Signed release-asset attestation verification runs only when GitHub reports that the Release is immutable; mutable Releases have digest verification but no attestation guarantee.
 
 CodeQL performs a scheduled and push/pull-request C# analysis using the real Windows WPF build. Dependabot checks immutable GitHub Actions references and the exact `global.json` .NET SDK weekly, opening reviewable update pull requests for both.
+
+See [CHANGELOG.md](CHANGELOG.md) for release changes.
 
 ## Versioning and releases
 

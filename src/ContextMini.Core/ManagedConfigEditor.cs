@@ -23,19 +23,28 @@ public sealed class ManagedConfigEditor
         var newLine = text.Length == 0
             ? Environment.NewLine
             : text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
-        var miniBegins = Count(text, MiniBeginMarker);
-        var miniEnds = Count(text, MiniEndMarker);
-        var legacyBegins = Count(text, LegacyBeginMarker);
-        var legacyEnds = Count(text, LegacyEndMarker);
-
-        if (miniBegins == 0 && miniEnds == 0 && legacyBegins == 0 && legacyEnds == 0)
+        var scan = Scan(text);
+        if (scan.Error is not null) return Invalid(text, newLine, scan.Error);
+        var miniBegins = Count(scan.Comments, MiniBeginMarker);
+        var miniEnds = Count(scan.Comments, MiniEndMarker);
+        var legacyBegins = Count(scan.Comments, LegacyBeginMarker);
+        var legacyEnds = Count(scan.Comments, LegacyEndMarker);
+        foreach (var commentLine in NormalizeLines(scan.Comments))
         {
-            if (text.Contains("codex-context-mini:", StringComparison.Ordinal) ||
-                text.Contains("# >>> context-window-manager", StringComparison.Ordinal))
+            var comment = commentLine.Trim();
+            var isMarker = comment.Contains("codex-context-mini:", StringComparison.Ordinal) ||
+                comment.Contains("# >>> context-window-manager", StringComparison.Ordinal) ||
+                comment.Contains("# <<< context-window-manager", StringComparison.Ordinal);
+            if (isMarker && comment != MiniBeginMarker && comment != MiniEndMarker &&
+                comment != LegacyBeginMarker && comment != LegacyEndMarker)
             {
                 return Invalid(text, newLine, "An unknown or malformed managed block marker is present.");
             }
-            var conflict = FindConflict(text);
+        }
+
+        if (miniBegins == 0 && miniEnds == 0 && legacyBegins == 0 && legacyEnds == 0)
+        {
+            var conflict = FindConflict(scan.Code);
             return conflict is null
                 ? new ManagedDocument(text, text, newLine, ManagedBlockKind.None, null, null, null, true, null)
                 : Invalid(text, newLine, $"A managed context key already exists outside the Mini block: {conflict}");
@@ -178,7 +187,7 @@ public sealed class ManagedConfigEditor
                 return Invalid(text, newLine, $"Managed context values are invalid: {exception.Message}");
             }
         }
-        var conflict = FindConflict(suffix);
+        var conflict = FindConflict(Scan(suffix).Code);
         return conflict is null
             ? new ManagedDocument(text, suffix, newLine, kind, window, compact, scope, true,
                 kind == ManagedBlockKind.LegacyPlugin ? "A legacy plugin block will migrate to Context Mini while preserving its compaction scope when applied." : null)
@@ -195,7 +204,7 @@ public sealed class ManagedConfigEditor
 
     private static bool TryExtract(string text, string endMarker, out string block, out string suffix)
     {
-        var end = text.IndexOf(endMarker, StringComparison.Ordinal);
+        var end = Scan(text).Comments.IndexOf(endMarker, StringComparison.Ordinal);
         if (end < 0)
         {
             block = string.Empty;
@@ -229,7 +238,7 @@ public sealed class ManagedConfigEditor
     {
         foreach (var rawLine in text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n'))
         {
-            var line = StripComment(rawLine).Trim();
+            var line = rawLine.Trim();
             if (line.Length == 0) continue;
 
             string? expression;
@@ -264,28 +273,105 @@ public sealed class ManagedConfigEditor
         return null;
     }
 
-    private static string StripComment(string line)
+    // Both projections retain original offsets/newlines. Quoted keys remain in Code
+    // for the existing key decoder; multiline value bodies are blanked. Comments
+    // contains only actual TOML comments, never marker examples inside strings.
+    private sealed record TomlScan(string Code, string Comments, string? Error);
+
+    private static TomlScan Scan(string text)
     {
+        var code = text.ToCharArray();
+        var comments = new char[text.Length];
+        Array.Fill(comments, ' ');
         var quote = '\0';
-        var escaped = false;
-        for (var index = 0; index < line.Length; index++)
+        var multiline = false;
+        var line = 1;
+        var openingLine = 1;
+        var index = 0;
+
+        void Blank(int offset)
         {
-            var character = line[index];
-            if (quote == '"' && escaped)
+            if (text[offset] is not ('\r' or '\n')) code[offset] = ' ';
+        }
+
+        TomlScan Failure(string reason) => new("", "",
+            $"TOML 字符串无法安全解析（第 {openingLine} 行）：{reason}；配置保持只读。");
+
+        while (index < text.Length)
+        {
+            var character = text[index];
+            if (character == '\n') line++;
+            if (character is '\r' or '\n') comments[index] = character;
+            if (quote == '\0')
             {
-                escaped = false;
+                if (character == '#')
+                {
+                    while (index < text.Length && text[index] is not ('\r' or '\n'))
+                    {
+                        comments[index] = text[index];
+                        code[index++] = ' ';
+                    }
+                    continue;
+                }
+                if (character is '\'' or '"')
+                {
+                    quote = character;
+                    openingLine = line;
+                    multiline = index + 2 < text.Length &&
+                        text[index + 1] == quote && text[index + 2] == quote;
+                    if (multiline)
+                    {
+                        Blank(index++);
+                        Blank(index++);
+                        Blank(index++);
+                        continue;
+                    }
+                }
+                index++;
                 continue;
             }
+
+            if (!multiline && character is ('\r' or '\n'))
+                return Failure("单行字符串中出现未转义的换行");
+
             if (quote == '"' && character == '\\')
             {
-                escaped = true;
+                if (multiline) Blank(index);
+                index++;
+                if (index == text.Length) return Failure("转义序列未结束");
+                if (!multiline && text[index] is ('\r' or '\n'))
+                    return Failure("单行字符串不能跨行");
+                // Escaped quotes cannot terminate the string. Multiline line
+                // continuations can contain whitespace; it cannot affect quote state.
+                if (text[index] == '\n') line++;
+                if (multiline) Blank(index);
+                index++;
                 continue;
             }
-            if (quote == '\0' && (character == '\'' || character == '"')) quote = character;
-            else if (quote != '\0' && character == quote) quote = '\0';
-            else if (quote == '\0' && character == '#') return line[..index];
+
+            if (character == quote)
+            {
+                if (!multiline)
+                {
+                    quote = '\0';
+                    index++;
+                    continue;
+                }
+                var runStart = index;
+                while (index < text.Length && text[index] == quote) Blank(index++);
+                var count = index - runStart;
+                // TOML permits one or two value quotes immediately before the
+                // closing triple delimiter (four/five quotes in total).
+                if (count > 5) return Failure("结束引号数量无法安全判定");
+                if (count >= 3) quote = '\0';
+                continue;
+            }
+            if (multiline) Blank(index);
+            index++;
         }
-        return line;
+        return quote != '\0'
+            ? Failure("字符串缺少结束引号")
+            : new TomlScan(new string(code), new string(comments), null);
     }
 
     private static List<string>? ParseKeySegments(string expression)

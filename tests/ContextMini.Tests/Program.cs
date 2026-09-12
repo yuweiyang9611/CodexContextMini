@@ -13,6 +13,7 @@ internal static partial class Program
     private static int Main()
     {
         RunGlobalTests();
+        RunTomlStringTests();
         Run("policy presets and custom bounds", PolicyPresets);
         Run("appearance preferences parse and resolve", AppearancePreferences);
         Run("appearance settings round-trip safely", AppearanceSettingsRoundTrip);
