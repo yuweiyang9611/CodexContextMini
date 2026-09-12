@@ -488,6 +488,29 @@ try {
         finally { $env:CONTEXT_MINI_TEST_RELEASE_ERROR = $savedError }
     }
 
+    Run 'Latest CLI wrapper handles JSON arrays and verifies the selected release' {
+        function gh {
+            $global:LASTEXITCODE = 0
+            if ($args[0] -ceq 'release' -and $args[1] -ceq 'list') { $latestFixture; return }
+            if ($args[0] -ceq 'release' -and $args[1] -ceq 'edit') { $latestEdits.Add([string]$args[2]); return }
+            if ($args[0] -ceq 'api') { $latestObserved; return }
+            throw 'Unexpected Latest gh invocation.'
+        }
+        $latestScript = Join-Path $root 'scripts\set-latest-github-release.ps1'
+        foreach ($fixture in @(
+            '[{"tagName":"v0.2.0","isDraft":false,"isPrerelease":false},{"tagName":"v0.3.0","isDraft":false,"isPrerelease":false}]',
+            '[{"tagName":"v0.3.0","isDraft":false,"isPrerelease":false}]'
+        )) {
+            $latestFixture = $fixture
+            $latestObserved = 'v0.3.0'
+            $latestEdits = New-Object 'System.Collections.Generic.List[string]'
+            & $latestScript -Repository 'fixture/repository'
+            Assert ($latestEdits.Count -eq 1 -and $latestEdits[0] -ceq 'v0.3.0') 'The CLI wrapper did not mark the highest stable JSON release Latest.'
+        }
+        $latestObserved = 'v0.2.0'
+        Assert-Throws { & $latestScript -Repository 'fixture/repository' } 'A stale Latest result must fail verification.' 'Latest verification failed'
+    }
+
     Run 'Latest selection uses highest stable SemVer regardless of API order' {
         $releases = @(
             ([PSCustomObject]@{ tagName = 'v2.1.9'; isDraft = $false; isPrerelease = $false }),
