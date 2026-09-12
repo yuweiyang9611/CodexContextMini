@@ -456,6 +456,38 @@ try {
         Assert-Throws { Assert-ContextMiniReleaseAssetDirectory -AssetDirectory $unexpectedLocal -Version '1.2.3' } 'Unexpected local release asset was accepted.' 'Unexpected release assets'
     }
 
+    Run 'release lookup preserves native stderr and rejects non-404 failures on Windows PowerShell' {
+        # Exercise the real wrapper with native stderr, not just its pure state resolver.
+        function gh {
+            if ($args[0] -ceq 'repo') {
+                $global:LASTEXITCODE = 0
+                '{"nameWithOwner":"fixture/repository"}'
+                return
+            }
+            if ($args[0] -cne 'release') { throw 'Unexpected gh invocation.' }
+            & powershell.exe -NoLogo -NoProfile -Command '[Console]::Error.WriteLine($env:CONTEXT_MINI_TEST_RELEASE_ERROR); exit 1'
+        }
+        function git { $global:LASTEXITCODE = 0 }
+        $savedError = $env:CONTEXT_MINI_TEST_RELEASE_ERROR
+        $lookup = Join-Path $root 'scripts\get-release-state.ps1'
+        $lookupArguments = @{
+            Repository = 'fixture/repository'; Tag = 'v0.3.0'; Version = '0.3.0'
+            SourceSha = ('a' * 40); GitHubOutput = (Join-Path $temp 'lookup-output.txt'); Json = $true
+        }
+        try {
+            foreach ($message in @('release not found', 'HTTP 404: Not Found')) {
+                $env:CONTEXT_MINI_TEST_RELEASE_ERROR = $message
+                $result = ((@(& $lookup @lookupArguments) -join [Environment]::NewLine) | ConvertFrom-Json)
+                Assert ([bool]$result.Publish) 'A missing release was not recognized from native stderr.'
+            }
+            foreach ($message in @('HTTP 401: Bad credentials', 'HTTP 503: Service Unavailable', '')) {
+                $env:CONTEXT_MINI_TEST_RELEASE_ERROR = $message
+                Assert-Throws { & $lookup @lookupArguments } 'An unexpected release lookup failure must stop publication.' 'Unable to inspect GitHub Release'
+            }
+        }
+        finally { $env:CONTEXT_MINI_TEST_RELEASE_ERROR = $savedError }
+    }
+
     Run 'Latest selection uses highest stable SemVer regardless of API order' {
         $releases = @(
             ([PSCustomObject]@{ tagName = 'v2.1.9'; isDraft = $false; isPrerelease = $false }),

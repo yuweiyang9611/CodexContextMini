@@ -36,7 +36,9 @@ foreach ($row in $tagRows) {
 
 $savedPreference = $ErrorActionPreference
 try {
-    $ErrorActionPreference = 'SilentlyContinue'
+    # Windows PowerShell 5.1 discards redirected native stderr under
+    # SilentlyContinue, hiding the expected 'release not found' response.
+    $ErrorActionPreference = 'Continue'
     $releaseOutput = @(& gh release view $Tag --repo $Repository --json isDraft,isPrerelease,name,tagName,targetCommitish,assets,url 2>&1)
     $releaseExitCode = $LASTEXITCODE
 }
