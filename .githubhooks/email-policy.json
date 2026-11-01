@@ -11,6 +11,7 @@
   "allowedContentEmailPatterns": [
     "^[^@\\s]+@users\\.noreply\\.github\\.com$",
     "^noreply@github\\.com$",
+    "^support@github\\.com$",
     "^[^@\\s]+@(?:[^@\\s]+\\.)+invalid$"
   ]
 }
