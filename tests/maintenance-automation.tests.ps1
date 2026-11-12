@@ -8,6 +8,7 @@ $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $dependabot = Join-Path $root '.github\dependabot.yml'
 $codeql = Join-Path $root '.github\workflows\codeql.yml'
+$ciRelease = Join-Path $root '.github\workflows\ci-release.yml'
 $globalJson = Join-Path $root 'global.json'
 $passed = 0
 
@@ -28,13 +29,16 @@ Run 'Dependabot tracks immutable GitHub Actions references' {
     Assert ($text.Contains('interval: weekly')) 'Dependabot is not scheduled weekly.'
 }
 
-Run 'Dependabot tracks the pinned .NET SDK and self-contained runtime source' {
+Run 'The .NET SDK is not pinned and CI installs the latest .NET 10 SDK' {
+    Assert (-not (Test-Path -LiteralPath $globalJson)) 'global.json would pin or restrict the .NET SDK again.'
     $text = [IO.File]::ReadAllText($dependabot)
-    Assert ($text.Contains('package-ecosystem: dotnet-sdk')) 'Dependabot does not track global.json.'
-    Assert ($text.Contains('prefix: chore(dotnet)')) '.NET SDK updates are not identifiable.'
-    $settings = [IO.File]::ReadAllText($globalJson) | ConvertFrom-Json
-    Assert (-not [bool]$settings.sdk.allowPrerelease) 'The release toolchain unexpectedly accepts prerelease SDKs.'
-    Assert ([string]$settings.sdk.rollForward -ceq 'disable') 'The build does not use the exact reviewed SDK.'
+    Assert (-not $text.Contains('package-ecosystem: dotnet-sdk')) 'Dependabot tracks a global.json that no longer exists.'
+    foreach ($workflow in @($ciRelease, $codeql)) {
+        $name = Split-Path -Leaf $workflow
+        $workflowText = [IO.File]::ReadAllText($workflow)
+        Assert ($workflowText.Contains('dotnet-version: 10.0.x')) "$name does not install the latest .NET 10 SDK."
+        Assert (-not $workflowText.Contains('global-json-file')) "$name still reads a global.json."
+    }
 }
 
 Run 'CodeQL actions are immutable and least privilege' {

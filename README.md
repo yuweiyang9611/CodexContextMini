@@ -37,7 +37,7 @@ The release executables are currently **not code-signed**. Windows Defender Smar
 
 ## Build and run
 
-The source build is pinned to `.NET SDK 10.0.400` and has no third-party NuGet packages.
+The source build needs .NET SDK 10 or later. The SDK version is not pinned, so the newest installed SDK is used. The build has no third-party NuGet packages.
 
 ```powershell
 # Restore and build the WPF app, Core library, and tests.
@@ -148,7 +148,7 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
 
 CI builds the WPF XAML on Windows, runs all tests, validates every workflow with a fixed-version actionlint archive whose official SHA-256 is pinned, and inspects both release ZIP manifests on every push and pull request. Release ZIP entries use a stable ordinal order and fixed timestamp. A main-branch Release publishes the tested assets rather than rebuilding them, then downloads every remote asset and checks it against GitHub's recorded SHA-256 digest. Newly created or automatically recovered same-commit Releases are also compared byte-for-byte with the tested assets. Signed release-asset attestation verification runs only when GitHub reports that the Release is immutable; mutable Releases have digest verification but no attestation guarantee.
 
-CodeQL performs a scheduled and push/pull-request C# analysis using the real Windows WPF build. Dependabot checks immutable GitHub Actions references and the exact `global.json` .NET SDK weekly, opening reviewable update pull requests for both.
+CodeQL performs a scheduled and push/pull-request C# analysis using the real Windows WPF build. Dependabot checks immutable GitHub Actions references weekly and opens reviewable update pull requests. CI installs the latest .NET 10 SDK on every run, so .NET patch releases reach the build and the self-contained runtime without a pull request.
 
 See [CHANGELOG.md](CHANGELOG.md) for release changes.
 
