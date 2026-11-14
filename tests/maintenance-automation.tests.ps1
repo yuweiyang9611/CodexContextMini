@@ -29,14 +29,14 @@ Run 'Dependabot tracks immutable GitHub Actions references' {
     Assert ($text.Contains('interval: weekly')) 'Dependabot is not scheduled weekly.'
 }
 
-Run 'The .NET SDK is not pinned and CI installs the latest .NET 10 SDK' {
+Run 'The .NET SDK is not pinned and CI installs the latest .NET 11 SDK' {
     Assert (-not (Test-Path -LiteralPath $globalJson)) 'global.json would pin or restrict the .NET SDK again.'
     $text = [IO.File]::ReadAllText($dependabot)
     Assert (-not $text.Contains('package-ecosystem: dotnet-sdk')) 'Dependabot tracks a global.json that no longer exists.'
     foreach ($workflow in @($ciRelease, $codeql)) {
         $name = Split-Path -Leaf $workflow
         $workflowText = [IO.File]::ReadAllText($workflow)
-        Assert ($workflowText.Contains('dotnet-version: 10.0.x')) "$name does not install the latest .NET 10 SDK."
+        Assert ($workflowText.Contains('dotnet-version: 11.0.x')) "$name does not install the latest .NET 11 SDK."
         Assert (-not $workflowText.Contains('global-json-file')) "$name still reads a global.json."
     }
 }

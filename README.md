@@ -15,7 +15,7 @@ Context Mini is an independent Windows WPF application for managing global defau
 Choose one ZIP from the GitHub Release:
 
 - **Recommended:** `ContextMini-vX.Y.Z-win-x64-self-contained.zip` includes the required .NET runtime. It is the larger download, but does not require a separate .NET installation. Its root `THIRD-PARTY-NOTICES.txt` includes the complete notices for the runtime packs actually shipped in that ZIP; `RUNTIME-PACKS.json` and `runtime-notices/` preserve package source, version, license, notice path, and SHA-256 provenance.
-- **Smaller:** `ContextMini-vX.Y.Z-win-x64.zip` is framework-dependent and requires the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0).
+- **Smaller:** `ContextMini-vX.Y.Z-win-x64.zip` is framework-dependent and requires the [.NET 11 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/11.0).
 
 Release downloads are published at [GitHub Releases](https://github.com/yuweiyang9611/CodexContextMini/releases) only after the version is changed manually.
 
@@ -37,7 +37,7 @@ The release executables are currently **not code-signed**. Windows Defender Smar
 
 ## Build and run
 
-The source build needs .NET SDK 10 or later. The SDK version is not pinned, so the newest installed SDK is used. The build has no third-party NuGet packages.
+The source build needs .NET SDK 11 or later. The SDK version is not pinned, so the newest installed SDK is used. The build has no third-party NuGet packages.
 
 ```powershell
 # Restore and build the WPF app, Core library, and tests.
@@ -148,7 +148,7 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
 
 CI builds the WPF XAML on Windows, runs all tests, validates every workflow with a fixed-version actionlint archive whose official SHA-256 is pinned, and inspects both release ZIP manifests on every push and pull request. Release ZIP entries use a stable ordinal order and fixed timestamp. A main-branch Release publishes the tested assets rather than rebuilding them, then downloads every remote asset and checks it against GitHub's recorded SHA-256 digest. Newly created or automatically recovered same-commit Releases are also compared byte-for-byte with the tested assets. Signed release-asset attestation verification runs only when GitHub reports that the Release is immutable; mutable Releases have digest verification but no attestation guarantee.
 
-CodeQL performs a scheduled and push/pull-request C# analysis using the real Windows WPF build. Dependabot checks immutable GitHub Actions references weekly and opens reviewable update pull requests. CI installs the latest .NET 10 SDK on every run, so .NET patch releases reach the build and the self-contained runtime without a pull request.
+CodeQL performs a scheduled and push/pull-request C# analysis using the real Windows WPF build. Dependabot checks immutable GitHub Actions references weekly and opens reviewable update pull requests. CI installs the latest .NET 11 SDK on every run, so .NET patch releases reach the build and the self-contained runtime without a pull request.
 
 See [CHANGELOG.md](CHANGELOG.md) for release changes.
 
