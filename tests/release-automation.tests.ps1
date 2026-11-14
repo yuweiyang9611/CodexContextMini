@@ -95,8 +95,8 @@ function New-FakePublish([string]$Path, [switch]$SelfContained) {
     }
     $libraries = [ordered]@{ 'ContextMini/1.2.3' = [ordered]@{} }
     if ($SelfContained) {
-        $libraries['runtimepack.Microsoft.WindowsDesktop.App.Runtime.win-x64/10.0.11'] = [ordered]@{}
-        $libraries['runtimepack.Microsoft.NETCore.App.Runtime.win-x64/10.0.11'] = [ordered]@{}
+        $libraries['runtimepack.Microsoft.WindowsDesktop.App.Runtime.win-x64/11.0.0'] = [ordered]@{}
+        $libraries['runtimepack.Microsoft.NETCore.App.Runtime.win-x64/11.0.0'] = [ordered]@{}
         foreach ($runtimeName in @('coreclr.dll','hostfxr.dll','hostpolicy.dll')) {
             Write-Utf8 -Path (Join-Path $Path $runtimeName) -Text ("fixture:$runtimeName`n")
         }
@@ -107,15 +107,15 @@ function New-FakePublish([string]$Path, [switch]$SelfContained) {
 
 function New-FakePackageRoot([string]$Path) {
     $packs = @(
-        [PSCustomObject]@{ Id = 'Microsoft.NETCore.App.Runtime.win-x64'; Version = '10.0.11' },
-        [PSCustomObject]@{ Id = 'Microsoft.WindowsDesktop.App.Runtime.win-x64'; Version = '10.0.11' }
+        [PSCustomObject]@{ Id = 'Microsoft.NETCore.App.Runtime.win-x64'; Version = '11.0.0' },
+        [PSCustomObject]@{ Id = 'Microsoft.WindowsDesktop.App.Runtime.win-x64'; Version = '11.0.0' }
     )
     foreach ($pack in $packs) {
         $package = Join-Path (Join-Path $Path $pack.Id.ToLowerInvariant()) $pack.Version
         Write-Utf8 -Path (Join-Path $package 'LICENSE.txt') -Text ("License for $($pack.Id) $($pack.Version)`n")
         Write-Utf8 -Path (Join-Path $package 'THIRD-PARTY-NOTICES.txt') -Text "Shared full third-party notice text.`r`nSecond line.`r`n"
     }
-    $unused = Join-Path (Join-Path $Path 'microsoft.aspnetcore.app.runtime.win-x64') '10.0.11'
+    $unused = Join-Path (Join-Path $Path 'microsoft.aspnetcore.app.runtime.win-x64') '11.0.0'
     Write-Utf8 -Path (Join-Path $unused 'LICENSE.txt') -Text "Unused package license`n"
     Write-Utf8 -Path (Join-Path $unused 'THIRD-PARTY-NOTICES.txt') -Text "Unused package notice`n"
 }
@@ -271,8 +271,8 @@ try {
         Assert (@($packages | Where-Object { $_.id -like '*AspNetCore*' }).Count -eq 0) 'Unused restored runtime pack leaked into the manifest.'
         Assert (@($manifest.combinedThirdPartyNotices.sourceNoticeSha256).Count -eq 1) 'Identical notice content was not deduplicated by SHA-256.'
         $combined = [IO.File]::ReadAllText((Join-Path $selfOne 'THIRD-PARTY-NOTICES.txt'))
-        Assert ($combined.Contains('Package: Microsoft.NETCore.App.Runtime.win-x64/10.0.11')) 'Combined notices omit the actual Core runtime pack.'
-        Assert ($combined.Contains('Package: Microsoft.WindowsDesktop.App.Runtime.win-x64/10.0.11')) 'Combined notices omit the actual Desktop runtime pack.'
+        Assert ($combined.Contains('Package: Microsoft.NETCore.App.Runtime.win-x64/11.0.0')) 'Combined notices omit the actual Core runtime pack.'
+        Assert ($combined.Contains('Package: Microsoft.WindowsDesktop.App.Runtime.win-x64/11.0.0')) 'Combined notices omit the actual Desktop runtime pack.'
         Assert (-not $combined.Contains('AspNetCore')) 'Combined notices mention a runtime pack not shipped by the app.'
         Assert ([regex]::Matches($combined, 'Notice-SHA256: [0-9a-f]{64}').Count -eq 1) 'Combined notices repeat identical notice bodies.'
         Assert ([regex]::Matches($combined, [regex]::Escape('Shared full third-party notice text.')).Count -eq 1) 'Combined notices do not contain exactly one complete shared notice body.'
@@ -303,7 +303,7 @@ try {
         Copy-DirectoryContents -Source $framework -Destination $frameworkWithPack
         $depsPath = Join-Path $frameworkWithPack 'ContextMini.deps.json'
         $deps = [IO.File]::ReadAllText($depsPath) | ConvertFrom-Json
-        $deps.libraries | Add-Member -NotePropertyName 'runtimepack.Hidden.Runtime.win-x64/10.0.11' -NotePropertyValue ([PSCustomObject]@{})
+        $deps.libraries | Add-Member -NotePropertyName 'runtimepack.Hidden.Runtime.win-x64/11.0.0' -NotePropertyValue ([PSCustomObject]@{})
         Write-Utf8 -Path $depsPath -Text (($deps | ConvertTo-Json -Depth 8) + "`n")
         $badZip = Join-Path $temp 'framework-with-pack.zip'
         New-ContextMiniDeterministicZip -SourceDirectory $frameworkWithPack -ArchivePath $badZip
@@ -359,7 +359,7 @@ try {
         Copy-DirectoryContents -Source $selfOne -Destination $extraDeps
         $depsPath = Join-Path $extraDeps 'ContextMini.deps.json'
         $deps = [IO.File]::ReadAllText($depsPath) | ConvertFrom-Json
-        $deps.libraries | Add-Member -NotePropertyName 'runtimepack.Extra.Runtime.win-x64/10.0.11' -NotePropertyValue ([PSCustomObject]@{})
+        $deps.libraries | Add-Member -NotePropertyName 'runtimepack.Extra.Runtime.win-x64/11.0.0' -NotePropertyValue ([PSCustomObject]@{})
         Write-Utf8 -Path $depsPath -Text (($deps | ConvertTo-Json -Depth 8) + "`n")
         $extraDepsZip = Join-Path $temp 'extra-deps.zip'
         New-ContextMiniDeterministicZip -SourceDirectory $extraDeps -ArchivePath $extraDepsZip
